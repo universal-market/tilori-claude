@@ -1,17 +1,47 @@
 #!/bin/sh
-# Runs tilori-agent with the given arguments. Finds the CLI (find-agent.sh)
-# and a Bun to run it with: the CLI's `#!/usr/bin/env bun` shebang only works
-# when bun is on PATH, which Claude Code's environment often lacks. Exits 127
-# (printing nothing on stdout) when either is missing.
+# Runs tilori-agent with the given arguments, safely, from whatever directory
+# Claude Code starts it in (usually the project being worked on).
+#
+# Bun reads bunfig.toml (including `preload` scripts), tsconfig.json and .env
+# from the *current directory*. An opened repository could therefore run code
+# inside `tilori-agent headers` or redirect TILORI_HOME / TILORI_AGENT /
+# TILORI_URL / TILORI_SOCKET. So we:
+#   - cd / before starting Bun (no project bunfig.toml, tsconfig.json or .env);
+#   - pass --no-env-file to Bun as well;
+#   - accept only absolute paths for the CLI and for bun (never ./bun via a
+#     "." or empty PATH entry).
+# Exits 127 (printing nothing on stdout) when the CLI or Bun is missing.
 set -u
-here=$(dirname "$0")
+here=$(cd "$(dirname "$0")" && pwd -P)
 bin=$("$here/find-agent.sh") || exit 127
-if command -v bun >/dev/null 2>&1; then
-  exec bun "$bin" "$@"
-fi
-b="${BUN_INSTALL:-$HOME/.bun}/bin/bun"
-if [ -x "$b" ]; then
-  exec "$b" "$bin" "$@"
-fi
-echo "tilori: bun not found (install Bun or put it on PATH)" >&2
-exit 127
+
+find_bun() {
+  old_ifs=$IFS; IFS=:
+  for d in $PATH; do
+    case "$d" in
+      /*) if [ -x "$d/bun" ] && [ ! -d "$d/bun" ]; then IFS=$old_ifs; echo "$d/bun"; return 0; fi ;;
+    esac
+  done
+  IFS=$old_ifs
+  for d in "${BUN_INSTALL:-}" "$HOME/.bun"; do
+    case "$d" in
+      /*) if [ -x "$d/bin/bun" ]; then echo "$d/bin/bun"; return 0; fi ;;
+    esac
+  done
+  return 1
+}
+
+cd / || exit 127
+# Newer tilori-agent versions ship a shell launcher (bin/tilori-agent) that
+# does the same hardening and is exec'd directly;
+# older versions expose src/cli.ts directly, which needs Bun.
+real=$(readlink -f "$bin" 2>/dev/null || echo "$bin")
+case "$real" in
+  *.ts)
+    bun=$(find_bun) || { echo "tilori: bun not found (install Bun or put it on PATH)" >&2; exit 127; }
+    exec "$bun" --no-env-file "$real" "$@"
+    ;;
+  *)
+    exec "$real" "$@"
+    ;;
+esac

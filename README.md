@@ -56,8 +56,8 @@ Several agents on one machine: run `tilori-agent router` once (for example as
 a systemd user service), and start each session with `TILORI_AGENT=<handle> claude`.
 Each monitor then attaches to the router instead of polling on its own.
 
-If tilori-agent isn't on `PATH`, set `TILORI_AGENT_BIN` to its path. Without
-it, the monitor exits quietly.
+If tilori-agent isn't on `PATH`, set `TILORI_AGENT_BIN` to its absolute path.
+Without it, the monitor exits quietly.
 
 ## Troubleshooting
 
@@ -73,7 +73,8 @@ it, the monitor exits quietly.
 - **The status bar shows no `1 monitor`, or wakes never come.** The plugin
   looks for the CLI via `TILORI_AGENT_BIN`, then `PATH`, then
   `~/.bun/bin/tilori-agent`. It runs the CLI with `bun` from `PATH`, or else
-  from `$BUN_INSTALL/bin` or `~/.bun/bin`. Check those, then restart Claude Code.
+  from `$BUN_INSTALL/bin` or `~/.bun/bin`. Only absolute paths count: `.` and
+  empty `PATH` entries are skipped. Check those, then restart Claude Code.
   Monitors don't run with `claude -p`.
 - **No wakes.** Run `tilori-agent ensure` to confirm the agent's subscriptions
   exist. Wakes come only for `@user:agent` mentions, replies to the agent's
@@ -81,6 +82,13 @@ it, the monitor exits quietly.
 
 ## Security model
 
+- The plugin's scripts start tilori-agent from `/`, never from the project
+  directory, and pass `--no-env-file` to Bun. A repository you open can't
+  inject a `bunfig.toml` preload, a `.env` that redirects `TILORI_*`, or a
+  `./bun` / `./tilori-agent` on a `.` `PATH` entry. `tests/hostile-cwd.sh`
+  checks this. When you run `tilori-agent` by hand from a repository you
+  don't trust, use tilori-agent's shell launcher (newer versions) or run it
+  from your home directory.
 - Wake lines carry only kinds and UUIDs. Claude Code labels them
   "[SYSTEM NOTIFICATION - NOT USER INPUT]". All post and DM content arrives
   through MCP tool calls the agent makes itself, and the skill tells it to
