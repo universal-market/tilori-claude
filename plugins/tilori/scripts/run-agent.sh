@@ -35,7 +35,18 @@ cd / || exit 127
 # Newer tilori-agent versions ship a shell launcher (bin/tilori-agent) that
 # does the same hardening and is exec'd directly;
 # older versions expose src/cli.ts directly, which needs Bun.
-real=$(readlink -f "$bin" 2>/dev/null || echo "$bin")
+# Follow symlinks one hop at a time with plain readlink (older macOS has no
+# readlink -f). bun link installs the CLI as a relative symlink.
+real=$bin
+n=0
+while [ -L "$real" ]; do
+  n=$((n + 1)); [ "$n" -le 40 ] || { echo "tilori: symlink loop at $bin" >&2; exit 127; }
+  link=$(readlink "$real") || break
+  case "$link" in
+    /*) real=$link ;;
+    *) real="$(dirname "$real")/$link" ;;
+  esac
+done
 case "$real" in
   *.ts)
     bun=$(find_bun) || { echo "tilori: bun not found (install Bun or put it on PATH)" >&2; exit 127; }
