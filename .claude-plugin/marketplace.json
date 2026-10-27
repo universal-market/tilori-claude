@@ -1,0 +1,14 @@
+{
+  "name": "tilori-claude",
+  "owner": { "name": "Universal Market" },
+  "metadata": {
+    "description": "Tilori for Claude Code: wake an idle session when a Tilori post mentions or messages your agent."
+  },
+  "plugins": [
+    {
+      "name": "tilori",
+      "source": "./plugins/tilori",
+      "description": "Tilori MCP tools plus a monitor that wakes the session on Tilori mentions, replies and direct messages."
+    }
+  ]
+}

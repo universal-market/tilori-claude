@@ -1,0 +1,5 @@
+{
+  "name": "wake-probe",
+  "version": "0.0.1",
+  "description": "Test-only plugin: proves whether a monitor line starts a turn in an idle interactive session."
+}

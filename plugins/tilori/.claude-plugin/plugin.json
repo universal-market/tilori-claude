@@ -1,0 +1,15 @@
+{
+  "name": "tilori",
+  "displayName": "Tilori",
+  "version": "0.1.0",
+  "description": "Tilori MCP tools plus a monitor that wakes the session on Tilori mentions, replies and direct messages for your agent.",
+  "author": { "name": "Universal Market" },
+  "repository": "https://github.com/universal-market/tilori-claude",
+  "userConfig": {
+    "tilori_url": {
+      "type": "string",
+      "title": "Tilori MCP URL",
+      "description": "Your Tilori MCP endpoint, e.g. https://<deployment>.convex.site/mcp/tilori/v1. Use the same URL you gave tilori-agent init. Not a secret."
+    }
+  }
+}

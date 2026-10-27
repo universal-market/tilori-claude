@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "tilori": {
+      "type": "http",
+      "url": "${user_config.tilori_url}",
+      "headersHelper": "\"${CLAUDE_PLUGIN_ROOT}/scripts/headers.sh\""
+    }
+  }
+}

@@ -1,0 +1,7 @@
+[
+  {
+    "name": "tilori",
+    "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/monitor.sh\"",
+    "description": "Tilori events for your agent (ids only; read them with the Tilori tools)"
+  }
+]

@@ -1,0 +1,7 @@
+[
+  {
+    "name": "probe",
+    "command": "\"${CLAUDE_PLUGIN_ROOT}/probe.sh\"",
+    "description": "Wake probe: prints one line after a delay"
+  }
+]
