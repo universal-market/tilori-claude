@@ -178,15 +178,53 @@ grep -q 'run-agent.sh' "$t/data/tilori-agent" || fail "launcher: stale launcher 
 # A new data directory is created private (umask 077).
 run_wl "$t/data-new"
 case "$(ls -ld "$t/data-new")" in drwx------*) ;; *) fail "launcher: data dir not 0700: $(ls -ld "$t/data-new")" ;; esac
-# Planted symlink at the temp name: noclobber refuses it, the target is
-# untouched and the launcher is not replaced. exec keeps the pid, so $$ in
-# the planting shell is the name write-launcher.sh will use.
-mkdir -p "$t/data-plant"; chmod 700 "$t/data-plant"
+# Planted objects. The old predictable temp name (.tilori-agent.<pid>) and
+# the launcher name itself get a symlink to a victim file, a FIFO or a
+# /dev/null symlink. The script must not hang (a FIFO would block a writer
+# or cmp), must not write through any of them, and must leave a regular
+# launcher file behind.
+cat > "$t/plant.sh" <<'SH'
+#!/bin/sh
+# $1 = what to plant, $2 = victim file, $3 = write-launcher.sh. exec keeps
+# this pid, so $$ here is the temp name an old-style script would use.
+d=$CLAUDE_PLUGIN_DATA
+case "$1" in
+  temp-symlink) ln -s "$2" "$d/.tilori-agent.$$" ;;
+  temp-fifo) mkfifo "$d/.tilori-agent.$$" ;;
+  temp-devnull) ln -s /dev/null "$d/.tilori-agent.$$" ;;
+  launcher-fifo) mkfifo "$d/tilori-agent" ;;
+  launcher-devnull) ln -s /dev/null "$d/tilori-agent" ;;
+  launcher-symlink) ln -s "$2" "$d/tilori-agent" ;;
+esac || exit 1
+exec "$3"
+SH
 printf 'victim\n' > "$t/victim"
-(cd "$p" && env -i HOME="$h" PATH=".:$sys" CLAUDE_PLUGIN_DATA="$t/data-plant" \
-  sh -c 'ln -s "$1" "$CLAUDE_PLUGIN_DATA/.tilori-agent.$$" && exec "$2"' sh "$t/victim" "$wl" >/dev/null 2>&1) || :
-[ "$(cat "$t/victim")" = victim ] || fail "launcher: wrote through a planted temp symlink"
-[ ! -e "$t/data-plant/tilori-agent" ] || fail "launcher: written despite a planted temp symlink"
+for plant in temp-symlink temp-fifo temp-devnull launcher-fifo launcher-devnull launcher-symlink; do
+  d="$t/data-$plant"; rm -rf "$d"; mkdir -p "$d"; chmod 700 "$d"
+  (cd "$p" && exec env -i HOME="$h" PATH=".:$sys" CLAUDE_PLUGIN_DATA="$d" sh "$t/plant.sh" "$plant" "$t/victim" "$wl") >/dev/null 2>&1 &
+  pid=$!; n=0
+  while kill -0 "$pid" 2>/dev/null; do
+    n=$((n + 1))
+    if [ "$n" -gt 100 ]; then
+      pkill -9 -P "$pid" 2>/dev/null; kill -9 "$pid" 2>/dev/null
+      fail "launcher: hung on a planted object ($plant)"
+    fi
+    sleep 0.1
+  done
+  wait "$pid" || fail "launcher: planting or write-launcher failed ($plant)"
+  [ "$(cat "$t/victim")" = victim ] || fail "launcher: wrote through a planted object ($plant)"
+  [ -c /dev/null ] || fail "launcher: /dev/null replaced ($plant)"
+  [ -f "$d/tilori-agent" ] && [ ! -L "$d/tilori-agent" ] || fail "launcher: no regular launcher after $plant"
+  grep -q 'run-agent.sh' "$d/tilori-agent" || fail "launcher: wrong content after $plant"
+done
+# An identical launcher with a foreign mode (group/world-writable) is rewritten.
+d="$t/data-foreign"; mkdir -p "$d"; chmod 700 "$d"; run_wl "$d"
+for mode in 666 664; do
+  chmod "$mode" "$d/tilori-agent"; i1=$(ino "$d/tilori-agent"); run_wl "$d"; i2=$(ino "$d/tilori-agent")
+  [ "$i1" != "$i2" ] || fail "launcher: identical mode $mode launcher was not rewritten"
+  case "$(ls -l "$d/tilori-agent")" in -rwxr-xr-x*) ;; *) fail "launcher: rewritten launcher mode: $(ls -l "$d/tilori-agent")" ;; esac
+done
+ls -a "$t"/data-* | grep -q '^\.tilori-agent\.......$' && fail "launcher: mktemp file left behind"
 # Symlinked data directory: nothing written into its target.
 mkdir -p "$t/real-data"; chmod 700 "$t/real-data"; ln -s "$t/real-data" "$t/data-link"
 run_wl "$t/data-link"
