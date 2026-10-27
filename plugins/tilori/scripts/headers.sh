@@ -7,4 +7,6 @@
 # directories are 0700 and all are owned by you. stderr is discarded so the
 # key or its path details never reach logs; on failure nothing is printed and
 # the server simply fails to connect.
-exec "$(dirname "$0")/run-agent.sh" headers 2>/dev/null
+# ${0%/*}, not dirname: no external command runs from the project directory.
+case "$0" in */*) here=${0%/*} ;; *) here=. ;; esac
+exec "$here/run-agent.sh" headers 2>/dev/null

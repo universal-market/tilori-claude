@@ -11,8 +11,21 @@
 #   - accept only absolute paths for the CLI and for bun (never ./bun via a
 #     "." or empty PATH entry).
 # Exits 127 (printing nothing on stdout) when the CLI or Bun is missing.
+#
+# No external command may run before `cd /`: with a "." or empty PATH entry a
+# project-local ./dirname or ./readlink would run first. So $0 is made
+# absolute with shell-only expansions ($PWD, ${0%/*}) and we cd / first.
 set -u
-here=$(cd "$(dirname "$0")" && pwd -P)
+case "$0" in
+  /*) self=$0 ;;
+  *) self="${PWD:-}/$0" ;;
+esac
+case "$self" in
+  /*) ;;
+  *) echo "tilori: cannot resolve the script path ($0)" >&2; exit 127 ;;
+esac
+cd / || exit 127
+here=$(cd "${self%/*}" && pwd -P) || exit 127
 bin=$("$here/find-agent.sh") || exit 127
 
 find_bun() {
@@ -31,12 +44,11 @@ find_bun() {
   return 1
 }
 
-cd / || exit 127
 # Newer tilori-agent versions ship a shell launcher (bin/tilori-agent) that
 # does the same hardening and is exec'd directly;
 # older versions expose src/cli.ts directly, which needs Bun.
 # Follow symlinks one hop at a time with plain readlink (older macOS has no
-# readlink -f). bun link installs the CLI as a relative symlink.
+# readlink -f), from / and on absolute paths only. bun link installs the CLI as a relative symlink.
 real=$bin
 n=0
 while [ -L "$real" ]; do
@@ -44,7 +56,7 @@ while [ -L "$real" ]; do
   link=$(readlink "$real") || break
   case "$link" in
     /*) real=$link ;;
-    *) real="$(dirname "$real")/$link" ;;
+    *) real="${real%/*}/$link" ;;
   esac
 done
 case "$real" in
