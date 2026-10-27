@@ -7,15 +7,20 @@
 #     or an empty PATH entry (no external command may run before cd /).
 # A fake tilori-agent (src/cli.ts) reports the cwd and TILORI_EVIL it sees.
 # Includes a negative control proving the hostile files do work on plain Bun.
+# The first part runs a copy of the scripts without vendor/ (the install-based
+# fallback); then a fake bundle in vendor/ (precedence); then the real
+# bundled CLI in plugins/tilori/vendor.
 set -eu
 case "$0" in */*) here=${0%/*} ;; *) here=. ;; esac
 repo=$(cd "$here/.." && pwd -P)
-scripts="$repo/plugins/tilori/scripts"
-run="$repo/plugins/tilori/scripts/run-agent.sh"
 realbun=$(command -v bun 2>/dev/null || echo "$HOME/.bun/bin/bun")
 [ -x "$realbun" ] || { echo "skip: bun not installed"; exit 0; }
 
 t=$(mktemp -d); trap 'rm -rf "$t"' EXIT
+plugin="$t/plugin"; mkdir -p "$plugin"
+cp -R "$repo/plugins/tilori/scripts" "$plugin/scripts"
+scripts="$plugin/scripts"
+run="$scripts/run-agent.sh"
 h="$t/home"; p="$t/project"; m="$t/markers"
 mkdir -p "$h/.bun/bin" "$h/pkg/src" "$p" "$m"
 ln -s "$realbun" "$h/.bun/bin/bun"
@@ -106,4 +111,52 @@ rm "$h/.bun/bin/tilori-agent"
 set +e; out=$(cd "$p" && env -i HOME="$h" PATH=".:$sys" sh "$run" d 2>/dev/null); rc=$?; set -e
 [ "$rc" = 127 ] && [ -z "$out" ] || fail "missing CLI: rc=$rc out=$out"
 no_markers "missing CLI"
+
+# Bundled CLI (vendor/tilori-agent.js): preferred over PATH and ~/.bun, run
+# with bun --no-env-file from /; an absolute TILORI_AGENT_BIN still wins.
+ln -sf ../../pkg/src/cli.ts "$h/.bun/bin/tilori-agent"
+mkdir -p "$plugin/vendor"
+cat > "$plugin/vendor/tilori-agent.js" <<'JS'
+console.log(`bundle cwd=${process.cwd()} evil=${process.env.TILORI_EVIL ?? 'unset'} args=${process.argv.slice(2).join(',')}`);
+JS
+for path in ".:$sys" ":$sys" "$sys"; do
+  out=$(cd "$p" && env -i HOME="$h" PATH="$path" "$scripts/headers.sh" 2>&1) || fail "bundle headers.sh, PATH=$path: exit $? ($out)"
+  [ "$out" = "bundle cwd=/ evil=unset args=headers" ] || fail "bundle headers.sh, PATH=$path: $out"
+  out=$(cd "$p" && env -i HOME="$h" PATH="$path" "$scripts/monitor.sh" 2>&1) || fail "bundle monitor.sh, PATH=$path: exit $? ($out)"
+  [ "$out" = "bundle cwd=/ evil=unset args=watch,--notify-lines" ] || fail "bundle monitor.sh, PATH=$path: $out"
+  out=$(cd "$p" && env -i HOME="$h" PATH="$path" "$rel/run-agent.sh" f 2>&1) || fail "bundle relative \$0, PATH=$path: exit $? ($out)"
+  [ "$out" = "bundle cwd=/ evil=unset args=f" ] || fail "bundle relative \$0, PATH=$path: $out"
+  no_markers "bundle, PATH=$path"
+done
+out=$(cd "$p" && env -i HOME="$h" PATH="$sys" TILORI_AGENT_BIN="$h/pkg/src/cli.ts" sh "$run" g 2>&1)
+[ "$out" = "cwd=/ evil=unset args=g" ] || fail "TILORI_AGENT_BIN over bundle: $out"
+out=$(cd "$p" && env -i HOME="$h" PATH="$sys" TILORI_AGENT_BIN=./tilori-agent sh "$run" h 2>&1)
+[ "$out" = "bundle cwd=/ evil=unset args=h" ] || fail "relative TILORI_AGENT_BIN over bundle: $out"
+no_markers "bundle precedence"
+
+# No agent configured (policy prints nothing): session-start gives a setup
+# hint naming this plugin's run-agent.sh, as valid JSON.
+printf '\n' > "$plugin/vendor/tilori-agent.js"
+out=$(cd "$p" && env -i HOME="$h" PATH=".:$sys" "$scripts/session-start.sh" 2>&1) || fail "hint: exit $?"
+printf '%s' "$out" | python3 -c 'import json,sys; json.load(sys.stdin)' || fail "hint is not JSON: $out"
+case "$out" in *"sh $scripts/run-agent.sh init --agent"*) ;; *) fail "hint lacks the init command: $out" ;; esac
+no_markers "hint"
+
+# The real bundled CLI from a hostile directory. The project's .env points
+# TILORI_HOME at a config naming agent "evilagent"; the control shows plain
+# Bun from the project picks it up, and the plugin's path must not.
+bundle="$repo/plugins/tilori/vendor/tilori-agent.js"
+[ -f "$bundle" ] || fail "missing $bundle"
+chmod 700 "$p"
+printf '{"default_agent":"evilagent"}\n' > "$p/config.json"; chmod 600 "$p/config.json"
+out=$(cd "$p" && env -i HOME="$h" PATH="$sys" "$realbun" "$bundle" policy 2>&1) || true
+case "$out" in *evilagent*) ;; *) fail "control: real bundle did not read the project .env (test is not meaningful): $out" ;; esac
+rm -f "$m/preload"
+out=$(cd "$p" && env -i HOME="$h" PATH=".:$sys" sh "$repo/plugins/tilori/scripts/run-agent.sh" help 2>&1) || fail "real bundle help: exit $? ($out)"
+case "$out" in "tilori-agent: wake local coding agents"*) ;; *) fail "real bundle help: $out" ;; esac
+no_markers "real bundle help"
+out=$(cd "$p" && env -i HOME="$h" PATH=".:$sys" "$repo/plugins/tilori/scripts/session-start.sh" 2>&1) || fail "real bundle session-start: exit $?"
+case "$out" in *evilagent*) fail "real bundle read the project .env: $out" ;; esac
+case "$out" in *"run-agent.sh init --agent"*) ;; *) fail "real bundle session-start gave no setup hint: $out" ;; esac
+no_markers "real bundle session-start"
 echo "hostile-cwd: ok"
