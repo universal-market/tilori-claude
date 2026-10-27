@@ -48,7 +48,8 @@ find_bun() {
 # does the same hardening and is exec'd directly;
 # older versions expose src/cli.ts directly, which needs Bun.
 # Follow symlinks one hop at a time with plain readlink (older macOS has no
-# readlink -f), from / and on absolute paths only. bun link installs the CLI as a relative symlink.
+# readlink -f), from / and on absolute paths only. bun link installs the CLI
+# as a relative symlink.
 real=$bin
 n=0
 while [ -L "$real" ]; do
