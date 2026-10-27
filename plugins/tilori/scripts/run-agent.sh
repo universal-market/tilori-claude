@@ -44,9 +44,10 @@ find_bun() {
   return 1
 }
 
-# Newer tilori-agent versions ship a shell launcher (bin/tilori-agent) that
-# does the same hardening and is exec'd directly;
-# older versions expose src/cli.ts directly, which needs Bun.
+# The bundled CLI (vendor/tilori-agent.js) and older tilori-agent installs
+# (src/cli.ts) run under Bun with --no-env-file, from /. Newer installs ship a
+# shell launcher (bin/tilori-agent) that does the same hardening and is
+# exec'd directly.
 # Follow symlinks one hop at a time with plain readlink (older macOS has no
 # readlink -f), from / and on absolute paths only. bun link installs the CLI
 # as a relative symlink.
@@ -61,7 +62,7 @@ while [ -L "$real" ]; do
   esac
 done
 case "$real" in
-  *.ts)
+  *.ts|*.js)
     bun=$(find_bun) || { echo "tilori: bun not found (install Bun or put it on PATH)" >&2; exit 127; }
     exec "$bun" --no-env-file "$real" "$@"
     ;;
