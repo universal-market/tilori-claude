@@ -78,8 +78,12 @@ session start rewrites it (only if it changed) to run that session's plugin
 version. The plugin writes it only into a real directory (not a symlink) that you
 own; it removes group and other write permission from that directory first
 (Claude Code creates it with your umask, often 0775) and refuses if it is
-still group- or world-writable. It never writes through an existing file or
-symlink. If the plugin's path contains a space or
+still group- or world-writable. It writes a new file under a random name
+(`mktemp`) and renames it into place, so it never writes through an existing
+file, symlink, FIFO or device, and it rewrites a launcher it doesn't own or
+that others can write even if the content is the same. If your account shares
+its group with other users, also run `chmod go-w ~/.claude/plugins/data`.
+If the plugin's path contains a space or
 any character outside `A-Za-z0-9/._+@-`, no launcher is written; point the
 unit at that version's `scripts/run-agent.sh` instead. After a
 plugin update, start a Claude Code session once, then restart the router.

@@ -41,14 +41,19 @@ content=$(
   printf '# Runs the tilori-agent CLI of the plugin version that last started a session.\n'
   printf 'exec /bin/sh %s/run-agent.sh "$@"\n' "$here"
 )
-# Unchanged: leave the file (and its inode) alone.
-if [ -f "$data/tilori-agent" ] && [ ! -L "$data/tilori-agent" ] \
-  && printf '%s\n' "$content" | cmp -s - "$data/tilori-agent"; then
-  exit 0
+# Unchanged: leave the file (and its inode) alone, but only if it is a
+# regular file we own that nobody else can write; otherwise rewrite it. -f
+# also keeps cmp away from a planted FIFO or device.
+if [ -f "$data/tilori-agent" ] && [ ! -L "$data/tilori-agent" ] && [ -O "$data/tilori-agent" ]; then
+  loose=$(find "$data/tilori-agent" -prune \( -perm -0020 -o -perm -0002 \) -print 2>/dev/null) || loose=x
+  if [ -z "$loose" ] && printf '%s\n' "$content" | cmp -s - "$data/tilori-agent"; then
+    exit 0
+  fi
 fi
-# noclobber: the temp name must not exist yet, so a planted file or symlink
-# makes the write fail instead of being followed.
-tmp="$data/.tilori-agent.$$"
-(set -C; printf '%s\n' "$content" > "$tmp") 2>/dev/null || exit 0
-chmod 755 "$tmp" && mv -f "$tmp" "$data/tilori-agent" || { rm -f "$tmp"; exit 0; }
+# mktemp creates a new regular file under a random name with O_EXCL, so a
+# planted file, symlink, FIFO or device can't be written through or block us.
+tmp=$(mktemp "$data/.tilori-agent.XXXXXX") || exit 0
+case "$tmp" in "$data"/.tilori-agent.*) ;; *) exit 0 ;; esac
+{ printf '%s\n' "$content" > "$tmp" && chmod 755 "$tmp" && mv -f "$tmp" "$data/tilori-agent"; } 2>/dev/null \
+  || { rm -f "$tmp"; exit 0; }
 exit 0
