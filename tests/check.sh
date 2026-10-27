@@ -16,10 +16,22 @@ got=$( (sha256sum plugins/tilori/vendor/tilori-agent.js 2>/dev/null || shasum -a
 [ -n "$want" ] && [ "$got" = "$want" ] || { echo "vendor/tilori-agent.js sha256 $got does not match SOURCE ($want)" >&2; exit 1; }
 echo "$got"
 echo "== bundle rebuild"
-if [ "${TILORI_SKIP_REBUILD:-}" = 1 ]; then echo "skipped (TILORI_SKIP_REBUILD=1)"; else sh tools/bundle-agent.sh --verify; fi
+if [ "${TILORI_SKIP_REBUILD:-}" = 1 ]; then
+  {
+    echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+    echo "!! WARNING: TILORI_SKIP_REBUILD=1, the bundle rebuild check was SKIPPED."
+    echo "!! vendor/tilori-agent.js matches SOURCE's checksum, but nobody proved it"
+    echo "!! is what the pinned tilori-agent tag builds to. Not valid for reviewing"
+    echo "!! a change to plugins/tilori/vendor/: rerun without TILORI_SKIP_REBUILD."
+    echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+  } >&2
+  skipped_rebuild=1
+else
+  sh tools/bundle-agent.sh --verify
+fi
 echo "== hostile cwd"; sh tests/hostile-cwd.sh
 echo "== secret scan"
 if git ls-files -z | xargs -0 grep -nE 'mcp_sk_[A-Za-z0-9]{20,}|sk-ant-[A-Za-z0-9]|BEGIN (RSA|EC|OPENSSH) PRIVATE' -- 2>/dev/null; then
   echo "possible secret in tracked files" >&2; exit 1
 fi
-echo ok
+if [ "${skipped_rebuild:-}" = 1 ]; then echo "ok (WARNING: bundle rebuild SKIPPED)"; else echo ok; fi
