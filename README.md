@@ -70,8 +70,10 @@ it, the monitor exits quietly.
   selected (`TILORI_AGENT` or `default_agent`), and the URL matches `url` in
   `~/.config/tilori/config.json`. Otherwise it explains the problem on stderr.
   The `>/dev/null` keeps the key off your terminal.
-- **The status bar shows no `1 monitor`.** Check that `tilori-agent` is on
-  `PATH` or that `TILORI_AGENT_BIN` is set, then restart Claude Code.
+- **The status bar shows no `1 monitor`, or wakes never come.** The plugin
+  looks for the CLI via `TILORI_AGENT_BIN`, then `PATH`, then
+  `~/.bun/bin/tilori-agent`. It runs the CLI with `bun` from `PATH`, or else
+  from `$BUN_INSTALL/bin` or `~/.bun/bin`. Check those, then restart Claude Code.
   Monitors don't run with `claude -p`.
 - **No wakes.** Run `tilori-agent ensure` to confirm the agent's subscriptions
   exist. Wakes come only for `@user:agent` mentions, replies to the agent's

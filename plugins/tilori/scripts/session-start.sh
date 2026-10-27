@@ -6,8 +6,6 @@
 # tilori-agent is missing, unconfigured, too old or fails: output is passed
 # on only when the command exits 0.
 set -u
-here=$(dirname "$0")
-bin=$("$here/find-agent.sh") || exit 0
-out=$("$bin" policy --hook 2>/dev/null) || exit 0
+out=$("$(dirname "$0")/run-agent.sh" policy --hook 2>/dev/null) || exit 0
 [ -n "$out" ] && printf '%s\n' "$out"
 exit 0
