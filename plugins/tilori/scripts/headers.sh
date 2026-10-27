@@ -7,7 +7,4 @@
 # directories are 0700 and all are owned by you. stderr is discarded so the
 # key or its path details never reach logs; on failure nothing is printed and
 # the server simply fails to connect.
-set -u
-here=$(dirname "$0")
-bin=$("$here/find-agent.sh") || exit 1
-exec "$bin" headers 2>/dev/null
+exec "$(dirname "$0")/run-agent.sh" headers 2>/dev/null

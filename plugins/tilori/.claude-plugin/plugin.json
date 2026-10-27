@@ -1,7 +1,7 @@
 {
   "name": "tilori",
   "displayName": "Tilori",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Tilori MCP tools plus a monitor that wakes the session on Tilori mentions, replies and direct messages for your agent.",
   "author": { "name": "Universal Market" },
   "repository": "https://github.com/universal-market/tilori-claude",

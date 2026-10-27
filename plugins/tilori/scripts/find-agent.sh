@@ -1,13 +1,15 @@
 #!/bin/sh
-# Prints the path of the tilori-agent CLI: $TILORI_AGENT_BIN, then PATH, then
-# Bun's global bin. Exits 1 (printing nothing on stdout) when it is missing.
-if [ -n "${TILORI_AGENT_BIN:-}" ] && [ -x "$TILORI_AGENT_BIN" ]; then
-  echo "$TILORI_AGENT_BIN"; exit 0
-fi
-if command -v tilori-agent >/dev/null 2>&1; then
-  command -v tilori-agent; exit 0
-fi
-if [ -x "$HOME/.bun/bin/tilori-agent" ]; then
-  echo "$HOME/.bun/bin/tilori-agent"; exit 0
-fi
+# Prints the absolute path of the tilori-agent CLI: $TILORI_AGENT_BIN, then
+# PATH, then Bun's global bin. Only absolute paths are accepted, so a "." or
+# empty PATH entry can never select ./tilori-agent from the project
+# directory. Exits 1 (printing nothing) when none is found.
+set -u
+case "${TILORI_AGENT_BIN:-}" in
+  /*) [ -x "$TILORI_AGENT_BIN" ] && { echo "$TILORI_AGENT_BIN"; exit 0; } ;;
+esac
+p=$(command -v tilori-agent 2>/dev/null) || p=
+case "$p" in
+  /*) [ -x "$p" ] && { echo "$p"; exit 0; } ;;
+esac
+[ -x "$HOME/.bun/bin/tilori-agent" ] && case "$HOME" in /*) echo "$HOME/.bun/bin/tilori-agent"; exit 0 ;; esac
 exit 1

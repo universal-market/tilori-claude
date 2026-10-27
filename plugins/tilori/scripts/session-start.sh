@@ -1,9 +1,11 @@
 #!/bin/sh
 # SessionStart hook: gives the session its Tilori coordination settings
 # (agent, coordination_community, trusted_owners) from
-# ~/.config/tilori/config.json via `tilori-agent policy --hook`. Values are
-# validated to usernames/UUIDs there. Prints nothing if unconfigured.
+# ~/.config/tilori/config.json via `tilori-agent policy --hook` (validated to
+# usernames/UUIDs there). Needs tilori-agent >= v0.1.0. Prints nothing if
+# tilori-agent is missing, unconfigured, too old or fails: output is passed
+# on only when the command exits 0.
 set -u
-here=$(dirname "$0")
-bin=$("$here/find-agent.sh") || exit 0
-exec "$bin" policy --hook 2>/dev/null
+out=$("$(dirname "$0")/run-agent.sh" policy --hook 2>/dev/null) || exit 0
+[ -n "$out" ] && printf '%s\n' "$out"
+exit 0
