@@ -74,7 +74,14 @@ The plugin directory (`~/.claude/plugins/cache/tilori-claude/tilori/<version>/`)
 changes with every plugin update, so a unit pointing into it breaks after
 each one. The launcher lives in the plugin's data directory
 (`$CLAUDE_PLUGIN_DATA`), which Claude Code keeps across updates, and every
-session start rewrites it to run that session's plugin version. After a
+session start rewrites it (only if it changed) to run that session's plugin
+version. The plugin writes it only into a real directory (not a symlink) that you
+own; it removes group and other write permission from that directory first
+(Claude Code creates it with your umask, often 0775) and refuses if it is
+still group- or world-writable. It never writes through an existing file or
+symlink. If the plugin's path contains a space or
+any character outside `A-Za-z0-9/._+@-`, no launcher is written; point the
+unit at that version's `scripts/run-agent.sh` instead. After a
 plugin update, start a Claude Code session once, then restart the router.
 
 The router and the monitors should be the same tilori-agent version. A

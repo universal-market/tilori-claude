@@ -165,6 +165,51 @@ out=$(cd "$p" && env -i HOME="$h" PATH=".:$sys" sh "$t/data/tilori-agent" router
 ls -a "$t/data" | grep -q '^\.tilori-agent\.' && fail "launcher: temp file left behind"
 no_markers "launcher"
 
+# Launcher hardening (write-launcher.sh run directly, from the hostile dir).
+wl="$scripts/write-launcher.sh"
+run_wl() { (cd "$p" && env -i HOME="$h" PATH=".:$sys" CLAUDE_PLUGIN_DATA="$1" "$wl" >/dev/null 2>&1) || fail "write-launcher exit $?"; }
+# Unchanged content: not rewritten (same inode); changed content: rewritten.
+ino() { ls -i "$1" | { read -r i _; echo "$i"; }; }
+i1=$(ino "$t/data/tilori-agent"); run_wl "$t/data"; i2=$(ino "$t/data/tilori-agent")
+[ "$i1" = "$i2" ] || fail "launcher: unchanged launcher was rewritten"
+printf '#!/bin/sh\necho stale\n' > "$t/data/tilori-agent"
+run_wl "$t/data"
+grep -q 'run-agent.sh' "$t/data/tilori-agent" || fail "launcher: stale launcher not refreshed"
+# A new data directory is created private (umask 077).
+run_wl "$t/data-new"
+case "$(ls -ld "$t/data-new")" in drwx------*) ;; *) fail "launcher: data dir not 0700: $(ls -ld "$t/data-new")" ;; esac
+# Planted symlink at the temp name: noclobber refuses it, the target is
+# untouched and the launcher is not replaced. exec keeps the pid, so $$ in
+# the planting shell is the name write-launcher.sh will use.
+mkdir -p "$t/data-plant"; chmod 700 "$t/data-plant"
+printf 'victim\n' > "$t/victim"
+(cd "$p" && env -i HOME="$h" PATH=".:$sys" CLAUDE_PLUGIN_DATA="$t/data-plant" \
+  sh -c 'ln -s "$1" "$CLAUDE_PLUGIN_DATA/.tilori-agent.$$" && exec "$2"' sh "$t/victim" "$wl" >/dev/null 2>&1) || :
+[ "$(cat "$t/victim")" = victim ] || fail "launcher: wrote through a planted temp symlink"
+[ ! -e "$t/data-plant/tilori-agent" ] || fail "launcher: written despite a planted temp symlink"
+# Symlinked data directory: nothing written into its target.
+mkdir -p "$t/real-data"; chmod 700 "$t/real-data"; ln -s "$t/real-data" "$t/data-link"
+run_wl "$t/data-link"
+[ ! -e "$t/real-data/tilori-agent" ] || fail "launcher: wrote through a symlinked data dir"
+# World- or group-writable data directory: our own directory is tightened
+# (go-w) before writing; if it can't be tightened, nothing is written.
+for mode in 777 770 775; do
+  mkdir -p "$t/data-$mode"; chmod "$mode" "$t/data-$mode"
+  run_wl "$t/data-$mode"
+  case "$(ls -ld "$t/data-$mode")" in d????-??-*) ;; *) fail "launcher: mode $mode dir not tightened: $(ls -ld "$t/data-$mode")" ;; esac
+  [ -f "$t/data-$mode/tilori-agent" ] || fail "launcher: not written after tightening a mode $mode dir"
+done
+mkdir -p "$t/nochmod" "$t/data-loose"; chmod 777 "$t/data-loose"
+# A chmod that fails on directories only, so the launcher file itself could be written.
+printf '#!/bin/sh\n[ -d "$2" ] && exit 1\nexec %s "$@"\n' "$(command -v chmod)" > "$t/nochmod/chmod"; chmod +x "$t/nochmod/chmod"
+(cd "$p" && env -i HOME="$h" PATH="$t/nochmod:$sys" CLAUDE_PLUGIN_DATA="$t/data-loose" "$wl" >/dev/null 2>&1) || :
+[ ! -e "$t/data-loose/tilori-agent" ] || fail "launcher: wrote into a world-writable dir it could not tighten"
+# A plugin path with a space: no launcher.
+mkdir -p "$t/with space"; cp -R "$scripts" "$t/with space/scripts"
+(cd "$p" && env -i HOME="$h" PATH=".:$sys" CLAUDE_PLUGIN_DATA="$t/data-space" "$t/with space/scripts/write-launcher.sh" >/dev/null 2>&1) || :
+[ ! -e "$t/data-space" ] || fail "launcher: written for a plugin path with a space"
+no_markers "launcher hardening"
+
 # The real bundled CLI from a hostile directory. The project's .env points
 # TILORI_HOME at a config naming agent "evilagent"; the control shows plain
 # Bun from the project picks it up, and the plugin's path must not.
