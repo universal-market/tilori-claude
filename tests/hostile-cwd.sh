@@ -63,6 +63,20 @@ ln -sf ../../pkg/launcher "$h/.bun/bin/tilori-agent"
 out=$(cd "$p" && env -i HOME="$h" PATH=".:$sys" sh "$run" c 2>&1)
 [ "$out" = "launcher cwd=/ args=c" ] || fail "launcher: $out"
 
+# A chain of relative symlinks to a .ts CLI, with a readlink that rejects -f
+# (older macOS): it must still be recognised as .ts and run with bun --no-env-file.
+mkdir -p "$t/a/b" "$t/shim"
+ln -s "$h/pkg/src/cli.ts" "$t/a/b/real-link"
+ln -s b/real-link "$t/a/hop"
+ln -sf ../../../a/hop "$h/.bun/bin/tilori-agent"
+r=$(command -v readlink)
+printf '#!/bin/sh\ncase "$1" in -*) echo "readlink: illegal option" >&2; exit 1 ;; esac\nexec %s "$@"\n' "$r" > "$t/shim/readlink"
+chmod +x "$t/shim/readlink"
+out=$(cd "$p" && env -i HOME="$h" PATH="$t/shim:.:$sys" sh "$run" e 2>&1) \
+  || fail "symlink chain without readlink -f: exit $? ($out)"
+[ "$out" = "cwd=/ evil=unset args=e" ] || fail "symlink chain without readlink -f: $out"
+for f in preload bun tilori-agent; do [ -e "$m/$f" ] && fail "symlink chain: hostile $f ran"; done
+
 # Missing CLI: exit 127, nothing on stdout.
 rm "$h/.bun/bin/tilori-agent"
 set +e; out=$(cd "$p" && env -i HOME="$h" PATH=".:$sys" sh "$run" d 2>/dev/null); rc=$?; set -e
