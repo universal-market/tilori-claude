@@ -3,11 +3,14 @@
 # nothing in that directory influences it:
 #   - bunfig.toml with a `preload` script (would run code inside Bun),
 #   - .env setting TILORI_* variables,
-#   - ./bun and ./tilori-agent picked up through "." or an empty PATH entry.
+#   - ./bun, ./tilori-agent, ./dirname and ./readlink picked up through "."
+#     or an empty PATH entry (no external command may run before cd /).
 # A fake tilori-agent (src/cli.ts) reports the cwd and TILORI_EVIL it sees.
 # Includes a negative control proving the hostile files do work on plain Bun.
 set -eu
-repo=$(cd "$(dirname "$0")/.." && pwd -P)
+case "$0" in */*) here=${0%/*} ;; *) here=. ;; esac
+repo=$(cd "$here/.." && pwd -P)
+scripts="$repo/plugins/tilori/scripts"
 run="$repo/plugins/tilori/scripts/run-agent.sh"
 realbun=$(command -v bun 2>/dev/null || echo "$HOME/.bun/bin/bun")
 [ -x "$realbun" ] || { echo "skip: bun not installed"; exit 0; }
@@ -26,11 +29,13 @@ ln -s ../../pkg/src/cli.ts "$h/.bun/bin/tilori-agent"
 printf 'preload = ["./evil.ts"]\n' > "$p/bunfig.toml"
 printf 'require("fs").writeFileSync(%s, "x");\n' "\"$m/preload\"" > "$p/evil.ts"
 printf 'TILORI_EVIL=1\nTILORI_HOME=%s\n' "$p" > "$p/.env"
-for n in bun tilori-agent; do
+hostile="bun tilori-agent dirname readlink"
+for n in $hostile; do
   printf '#!/bin/sh\ntouch "%s/%s"\necho hijacked\n' "$m" "$n" > "$p/$n"; chmod +x "$p/$n"
 done
 
 fail() { echo "FAIL: $*" >&2; exit 1; }
+no_markers() { for f in preload $hostile; do [ -e "$m/$f" ] && fail "$1: hostile $f ran"; done; :; }
 
 # Negative control: plain Bun from the project dir honours both files.
 (cd "$p" && "$realbun" "$h/pkg/src/cli.ts" >/dev/null 2>&1) || true
@@ -43,10 +48,29 @@ sys=/usr/bin:/bin
 for path in ".:$sys" ":$sys" "$sys:" "$sys::/nonexistent" "$sys"; do
   out=$(cd "$p" && env -i HOME="$h" PATH="$path" sh "$run" headers --x 2>&1) || fail "PATH=$path: exit $? ($out)"
   [ "$out" = "cwd=/ evil=unset args=headers,--x" ] || fail "PATH=$path: unexpected output: $out"
-  for f in preload bun tilori-agent; do
-    [ -e "$m/$f" ] && fail "PATH=$path: hostile $f ran"
+  no_markers "PATH=$path"
+done
+
+# The entry scripts Claude Code runs (by absolute path, not via sh), and
+# run-agent.sh by a relative path from the project directory, with PATH
+# starting with "." or an empty entry.
+rel=$(printf '%s' "$p" | sed 's|[^/][^/]*|..|g'); rel="${rel#/}$scripts"
+for path in ".:$sys" ":$sys"; do
+  for s in headers.sh session-start.sh; do
+    out=$(cd "$p" && env -i HOME="$h" PATH="$path" "$scripts/$s" 2>&1) || fail "$s, PATH=$path: exit $? ($out)"
+    case "$s" in
+      headers.sh) want="cwd=/ evil=unset args=headers" ;;
+      session-start.sh) want="cwd=/ evil=unset args=policy,--hook" ;;
+    esac
+    [ "$out" = "$want" ] || fail "$s, PATH=$path: unexpected output: $out"
+    no_markers "$s, PATH=$path"
   done
-  : # ok
+  out=$(cd "$p" && env -i HOME="$h" PATH="$path" "$scripts/monitor.sh" 2>&1) || fail "monitor.sh, PATH=$path: exit $? ($out)"
+  [ "$out" = "cwd=/ evil=unset args=watch,--notify-lines" ] || fail "monitor.sh, PATH=$path: unexpected output: $out"
+  no_markers "monitor.sh, PATH=$path"
+  out=$(cd "$p" && env -i HOME="$h" PATH="$path" "$rel/run-agent.sh" r 2>&1) || fail "relative \$0, PATH=$path: exit $? ($out)"
+  [ "$out" = "cwd=/ evil=unset args=r" ] || fail "relative \$0, PATH=$path: unexpected output: $out"
+  no_markers "relative \$0, PATH=$path"
 done
 
 # A relative TILORI_AGENT_BIN is ignored; an absolute one is used.
@@ -54,7 +78,7 @@ out=$(cd "$p" && env -i HOME="$h" PATH="$sys" TILORI_AGENT_BIN=./tilori-agent sh
 [ "$out" = "cwd=/ evil=unset args=a" ] || fail "relative TILORI_AGENT_BIN: $out"
 out=$(cd "$p" && env -i HOME="$t/nohome" PATH="$sys" TILORI_AGENT_BIN="$h/pkg/src/cli.ts" BUN_INSTALL="$h/.bun" sh "$run" b 2>&1)
 [ "$out" = "cwd=/ evil=unset args=b" ] || fail "absolute TILORI_AGENT_BIN: $out"
-[ -e "$m/tilori-agent" ] && fail "hostile tilori-agent ran"
+no_markers "TILORI_AGENT_BIN"
 
 # The shebang path: a launcher that is not a .ts file is exec'd directly
 # (newer tilori-agent ships a hardened shell launcher); still from /.
@@ -75,11 +99,11 @@ chmod +x "$t/shim/readlink"
 out=$(cd "$p" && env -i HOME="$h" PATH="$t/shim:.:$sys" sh "$run" e 2>&1) \
   || fail "symlink chain without readlink -f: exit $? ($out)"
 [ "$out" = "cwd=/ evil=unset args=e" ] || fail "symlink chain without readlink -f: $out"
-for f in preload bun tilori-agent; do [ -e "$m/$f" ] && fail "symlink chain: hostile $f ran"; done
+no_markers "symlink chain"
 
 # Missing CLI: exit 127, nothing on stdout.
 rm "$h/.bun/bin/tilori-agent"
 set +e; out=$(cd "$p" && env -i HOME="$h" PATH=".:$sys" sh "$run" d 2>/dev/null); rc=$?; set -e
 [ "$rc" = 127 ] && [ -z "$out" ] || fail "missing CLI: rc=$rc out=$out"
-for f in preload bun tilori-agent; do [ -e "$m/$f" ] && fail "hostile $f ran"; done
+no_markers "missing CLI"
 echo "hostile-cwd: ok"
