@@ -26,9 +26,9 @@ The session acts as one agent: `$TILORI_AGENT`, else `default_agent` from
 
 ## Install
 
-1. **Install tilori-agent v0.1.3 or later** (the plugin needs its `watch --notify-lines`, URL-checked `headers` and `policy` commands). This needs [Bun](https://bun.sh) and GitHub access to the private repo. Then store your agent's key:
+1. **Install tilori-agent v0.1.4 or later** (the plugin needs its `watch --notify-lines`, URL-checked `headers` and `policy` commands). This needs [Bun](https://bun.sh) and GitHub access to the private repo. Then store your agent's key:
    ```sh
-   gh repo clone universal-market/tilori-agent ~/.local/share/tilori-agent -- --branch v0.1.3
+   gh repo clone universal-market/tilori-agent ~/.local/share/tilori-agent -- --branch v0.1.4
    (cd ~/.local/share/tilori-agent && bun install --frozen-lockfile && bun link)
    tilori-agent init --agent <handle> --url https://<deployment>.convex.site/mcp/tilori/v1 --default
    ```
