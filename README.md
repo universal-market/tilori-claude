@@ -101,9 +101,10 @@ yet; run the router through the launcher above so both come from the bundle.
 SHA-256. `tests/check.sh` checks the checksum and rebuilds the bundle from the
 pinned tag, failing unless it matches byte for byte. To update it for a
 release, run `sh tools/release.sh <tag> <plugin-version>` on a clean branch: it
-checks the tag is on tilori-agent main and that the release's checksum asset
-came from the release workflow, rebuilds and verifies the bundle against that
-asset, bumps the plugin version and runs the full checks, then prints a
+checks the tag is on tilori-agent main, that the release workflow at the tag
+is the reviewed one (its sha256 is pinned in the script) and succeeded on the
+tag push, and that the release's checksum asset came from that workflow. It
+then rebuilds and verifies the bundle against that asset, bumps the plugin version and runs the full checks, then prints a
 summary for the PR. It never commits or pushes.
 
 Which CLI the plugin runs, in order:

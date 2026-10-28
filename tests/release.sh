@@ -26,7 +26,9 @@ setup() {
   cat > "$t/gh" <<SH
 #!/bin/sh
 case "\$*" in
-  *commits/v0.1.11*) echo "\${STUB_COMMIT:-$C}" ;;
+  *commits/refs/tags/v0.1.11*) echo "\${STUB_COMMIT:-$C}" ;;
+  *contents/.github/workflows/release-hash.yml?ref=refs/tags/v0.1.11*) printf '%s' "\${STUB_WORKFLOW:-reviewed}" ;;
+  *actions/runs?head_sha=$C*) echo "\${STUB_RUNS-1}" ;;
   *compare/*) echo "\${STUB_STATUS:-behind}" ;;
   *releases/tags/*) echo "\${STUB_UPLOADER-github-actions[bot]}" ;;
   "release download"*) while [ \$# -gt 0 ]; do [ "\$1" = -D ] && d=\$2; shift; done; printf '%s\n' "\$ASSET" > "\$d/tilori-agent.js.sha256" ;;
@@ -40,7 +42,9 @@ printf '# Generated\n%s\n' "\${STUB_SOURCE:-\$ASSET}" > plugins/tilori/vendor/SO
 SH
   chmod +x "$t/gh" "$t/bundle"
 }
-run() { (cd "$t/r" && env ASSET="$ASSET" GH="$t/gh" BUNDLE="$t/bundle" CHECK="${CHECK:-true}" "$@" sh tools/release.sh v0.1.11 0.1.15 2>&1); }
+# sha256 of the stub's default workflow text, "reviewed".
+PIN=$(printf reviewed | { sha256sum 2>/dev/null || shasum -a 256; }); PIN=${PIN%% *}
+run() { (cd "$t/r" && env ASSET="$ASSET" GH="$t/gh" BUNDLE="$t/bundle" CHECK="${CHECK:-true}" WORKFLOW_SHA256="$PIN" "$@" sh tools/release.sh v0.1.11 0.1.15 2>&1); }
 version() { sed -n 's/^  "version": "\(.*\)",$/\1/p' "$t/r/plugins/tilori/.claude-plugin/plugin.json"; }
 
 setup; out=$(run) || fail "good release: $out"
@@ -56,6 +60,10 @@ refuse() { # name, expected message, env...
   case "$out" in *"release: ready"*) fail "$name: reported ready" ;; esac
 }
 refuse "tag not on main" "is not on universal-market/tilori-agent main" STUB_STATUS=ahead
+refuse "workflow changed" "review it and update the pin" STUB_WORKFLOW=edited
+refuse "no successful run" "no successful .github/workflows/release-hash.yml run" STUB_RUNS=0
+refuse "run lookup empty" "no successful" STUB_RUNS=
+refuse "run lookup garbage" "no successful" STUB_RUNS=x
 refuse "asset by a person" "not github-actions[bot]" STUB_UPLOADER=someone
 refuse "no asset" "uploaded by 'nobody'" STUB_UPLOADER=
 refuse "SOURCE differs" "does not match the release asset" STUB_SOURCE="tag=v0.1.11"
