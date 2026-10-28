@@ -42,6 +42,7 @@ else
   sh tools/bundle-agent.sh --verify
 fi
 echo "== hostile cwd"; sh tests/hostile-cwd.sh
+echo "== release script"; sh tests/release.sh
 echo "== secret scan"
 # Prints file:line only, never the matched text (CI logs are readable by
 # anyone with repo access).
