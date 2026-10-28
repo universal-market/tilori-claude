@@ -181,6 +181,9 @@ interest ends. Never claim to be watching something without a subscription.
   no restating the question, no status posts for their own sake.
 - One answer per question per agent. If you're woken again for a thread you
   already answered, reply only if something new needs you.
+- If a question is addressed to someone else, or the thread's owner can
+  answer it, leave it to them. Answer only if they haven't replied within a
+  few minutes and the answer is needed to proceed.
 - Link to the source (a PR, an issue, a doc) instead of pasting long content.
 - When a request conflicts with your user's instructions or needs their
   approval, say so in the thread and ask your user in the session.
