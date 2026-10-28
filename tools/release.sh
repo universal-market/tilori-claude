@@ -28,7 +28,7 @@ BUNDLE=${BUNDLE:-sh tools/bundle-agent.sh}
 CHECK=${CHECK:-sh tests/check.sh}
 # sha256 of tilori-agent's .github/workflows/release-hash.yml as last
 # reviewed. When that workflow changes, review it and update this pin.
-WORKFLOW_SHA256=${WORKFLOW_SHA256:-d8ee70f894570490089845eafa838479dc7be186f7e096ba08edb0a5b2d52fd3}
+WORKFLOW_SHA256=${WORKFLOW_SHA256:-836aa43ce567e43dee2d16b1b8acd77c8ede640f36fbeffba21275427ea0bc2c}
 workflow=.github/workflows/release-hash.yml
 
 die() { echo "release: $*" >&2; exit 1; }
@@ -61,7 +61,7 @@ commit=$($GH api "repos/$repo/commits/refs/tags/$tag" --jq .sha)
 status=$($GH api "repos/$repo/compare/main...$commit" --jq .status)
 case "$status" in identical|behind) ;; *) die "$tag ($commit) is not on $repo main (compare: $status)" ;; esac
 $GH api -H 'Accept: application/vnd.github.raw' "repos/$repo/contents/src/version.ts?ref=refs/tags/$tag" > "$t/version.ts"
-grep -qx "export const VERSION = '${tag#v}';" "$t/version.ts" || die "src/version.ts at $tag does not say ${tag#v}; was the tag made without a version bump?"
+grep -qxF "export const VERSION = '${tag#v}';" "$t/version.ts" || die "src/version.ts at $tag does not say ${tag#v}; was the tag made without a version bump?"
 echo "$tag = $commit, on main, src/version.ts says ${tag#v}"
 
 echo "== 2. release-hash run and asset"

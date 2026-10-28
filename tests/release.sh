@@ -63,6 +63,7 @@ refuse() { # name, expected message, env...
 refuse "tag not on main" "is not on universal-market/tilori-agent main" STUB_STATUS=ahead
 refuse "tag without a version bump" "does not say 0.1.11" STUB_VERSION_TS="export const VERSION = '0.1.10';"
 refuse "version is a prefix" "does not say 0.1.11" STUB_VERSION_TS="export const VERSION = '0.1.111';"
+refuse "dots are not wildcards" "does not say 0.1.11" STUB_VERSION_TS="export const VERSION = '0x1y11';"
 refuse "version.ts missing" "does not say 0.1.11" STUB_VERSION_TS=
 refuse "workflow changed" "review it and update the pin" STUB_WORKFLOW=edited
 refuse "no successful run" "no successful .github/workflows/release-hash.yml run" STUB_RUNS=0
