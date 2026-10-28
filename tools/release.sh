@@ -4,7 +4,8 @@
 #
 #   sh tools/release.sh v0.1.11 0.1.15
 #
-#   1. the tag's commit is on tilori-agent main;
+#   1. the tag's commit is on tilori-agent main, and its src/version.ts
+#      says the tag's version (v0.1.12 was tagged without a bump);
 #   2. the release-hash workflow at the tag is the reviewed one (its sha256
 #      is pinned below), it ran on the tag push for that commit and
 #      succeeded, and the release's tilori-agent.js.sha256 asset was
@@ -59,7 +60,9 @@ echo "== 1. tag on main"
 commit=$($GH api "repos/$repo/commits/refs/tags/$tag" --jq .sha)
 status=$($GH api "repos/$repo/compare/main...$commit" --jq .status)
 case "$status" in identical|behind) ;; *) die "$tag ($commit) is not on $repo main (compare: $status)" ;; esac
-echo "$tag = $commit, on main"
+$GH api -H 'Accept: application/vnd.github.raw' "repos/$repo/contents/src/version.ts?ref=refs/tags/$tag" > "$t/version.ts"
+grep -qx "export const VERSION = '${tag#v}';" "$t/version.ts" || die "src/version.ts at $tag does not say ${tag#v}; was the tag made without a version bump?"
+echo "$tag = $commit, on main, src/version.ts says ${tag#v}"
 
 echo "== 2. release-hash run and asset"
 $GH api -H 'Accept: application/vnd.github.raw' "repos/$repo/contents/$workflow?ref=refs/tags/$tag" > "$t/workflow"
@@ -99,7 +102,7 @@ $CHECK
 cat <<SUMMARY
 
 release: ready to commit. For the PR body:
-- Bundle: tilori-agent $tag at \`$(printf '%.7s' "$commit")\`, on main. \`$workflow\` at the tag is the reviewed one (sha256 \`$(printf '%.8s' "$WORKFLOW_SHA256")…\`) and its run on the tag push succeeded. \`vendor/SOURCE\` minus its comment line is identical to the release's \`tilori-agent.js.sha256\` asset (uploaded by github-actions[bot]): sha256 \`$sha\`. \`bundle-agent.sh --verify\` matches a rebuild.
+- Bundle: tilori-agent $tag at \`$(printf '%.7s' "$commit")\`, on main, with \`src/version.ts\` = ${tag#v}. \`$workflow\` at the tag is the reviewed one (sha256 \`$(printf '%.8s' "$WORKFLOW_SHA256")…\`) and its run on the tag push succeeded. \`vendor/SOURCE\` minus its comment line is identical to the release's \`tilori-agent.js.sha256\` asset (uploaded by github-actions[bot]): sha256 \`$sha\`. \`bundle-agent.sh --verify\` matches a rebuild.
 - Version: plugin.json $current -> $version.
 - \`tests/check.sh\` passes (rebuild included).
 SUMMARY

@@ -27,6 +27,7 @@ setup() {
 #!/bin/sh
 case "\$*" in
   *commits/refs/tags/v0.1.11*) echo "\${STUB_COMMIT:-$C}" ;;
+  *contents/src/version.ts?ref=refs/tags/v0.1.11*) printf '%s\n' "\${STUB_VERSION_TS-export const VERSION = '0.1.11';}" ;;
   *contents/.github/workflows/release-hash.yml?ref=refs/tags/v0.1.11*) printf '%s' "\${STUB_WORKFLOW:-reviewed}" ;;
   *actions/runs?head_sha=$C*) echo "\${STUB_RUNS-1}" ;;
   *compare/*) echo "\${STUB_STATUS:-behind}" ;;
@@ -60,6 +61,9 @@ refuse() { # name, expected message, env...
   case "$out" in *"release: ready"*) fail "$name: reported ready" ;; esac
 }
 refuse "tag not on main" "is not on universal-market/tilori-agent main" STUB_STATUS=ahead
+refuse "tag without a version bump" "does not say 0.1.11" STUB_VERSION_TS="export const VERSION = '0.1.10';"
+refuse "version is a prefix" "does not say 0.1.11" STUB_VERSION_TS="export const VERSION = '0.1.111';"
+refuse "version.ts missing" "does not say 0.1.11" STUB_VERSION_TS=
 refuse "workflow changed" "review it and update the pin" STUB_WORKFLOW=edited
 refuse "no successful run" "no successful .github/workflows/release-hash.yml run" STUB_RUNS=0
 refuse "run lookup empty" "no successful" STUB_RUNS=
