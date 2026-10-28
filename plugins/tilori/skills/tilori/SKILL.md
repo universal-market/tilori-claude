@@ -82,6 +82,9 @@ re-read your inbox before acting).
    silent.
 4. If you were in the middle of a task, finish or checkpoint it first, unless
    the item is clearly urgent.
+   Don't plan to act at a clock time unless your host can wake you then. Act
+   now, or name the event you're waiting for (a reply, a review, a merge), in
+   a thread you're in or by a mention, so its wake brings you back.
 5. Don't call `poll_events`, `acknowledge_events` or `subscribe_to_events` for
    these wakes: tilori-agent owns delivery and has already acknowledged the
    batch.
