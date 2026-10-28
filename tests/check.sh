@@ -1,13 +1,25 @@
 #!/bin/sh
-# Local checks (no CI): plugin and marketplace validation, shell syntax, the
-# bundled CLI (checksum + rebuild from its pinned tag), hostile cwd, secret scan.
+# Plugin and marketplace validation, shell syntax, the bundled CLI (checksum +
+# rebuild from its pinned tag), hostile cwd, secret scan. CI runs it with both
+# skips set (.github/workflows/check.yml); each skip prints a WARNING.
 # TILORI_SKIP_REBUILD=1 skips only the rebuild (needs gh access and the pinned Bun).
+# TILORI_SKIP_VALIDATE=1 skips only `claude plugin validate` (needs Claude Code).
 set -eu
 cd "$(dirname "$0")/.."
-CLAUDE="${CLAUDE:-$(command -v claude || echo "$HOME/.local/bin/claude")}"
-echo "== plugin";      "$CLAUDE" plugin validate --strict ./plugins/tilori | tail -1
-echo "== marketplace"; "$CLAUDE" plugin validate . | tail -1
-echo "== wake probe";  "$CLAUDE" plugin validate ./tests/wake-probe/plugin | tail -1
+if [ "${TILORI_SKIP_VALIDATE:-}" = 1 ]; then
+  {
+    echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+    echo "!! WARNING: TILORI_SKIP_VALIDATE=1, \`claude plugin validate\` was SKIPPED"
+    echo "!! for the plugin, the marketplace and the wake probe. Run it locally."
+    echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+  } >&2
+  skipped_validate=1
+else
+  CLAUDE="${CLAUDE:-$(command -v claude || echo "$HOME/.local/bin/claude")}"
+  echo "== plugin";      "$CLAUDE" plugin validate --strict ./plugins/tilori | tail -1
+  echo "== marketplace"; "$CLAUDE" plugin validate . | tail -1
+  echo "== wake probe";  "$CLAUDE" plugin validate ./tests/wake-probe/plugin | tail -1
+fi
 echo "== shell";       for f in plugins/tilori/scripts/*.sh tests/*.sh tools/*.sh tests/wake-probe/plugin/probe.sh; do sh -n "$f"; done
 echo "== json";        for f in .claude-plugin/marketplace.json plugins/tilori/.claude-plugin/plugin.json plugins/tilori/.mcp.json plugins/tilori/monitors/monitors.json plugins/tilori/hooks/hooks.json; do python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$f"; done
 echo "== bundle checksum"
@@ -31,7 +43,17 @@ else
 fi
 echo "== hostile cwd"; sh tests/hostile-cwd.sh
 echo "== secret scan"
-if git ls-files -z | xargs -0 grep -nE 'mcp_sk_[A-Za-z0-9]{20,}|sk-ant-[A-Za-z0-9]|BEGIN (RSA|EC|OPENSSH) PRIVATE' -- 2>/dev/null; then
+# Prints file:line only, never the matched text (CI logs are readable by
+# anyone with repo access).
+secret_re='mcp_sk_[A-Za-z0-9]{20,}|sk-ant-[A-Za-z0-9]|BEGIN (RSA|EC|OPENSSH) PRIVATE'
+files=$(git ls-files -z | xargs -0 grep -lE "$secret_re" -- 2>/dev/null) || true
+if [ -n "$files" ]; then
+  printf '%s\n' "$files" | while IFS= read -r f; do
+    grep -naE "$secret_re" -- "$f" | cut -d: -f1 | while read -r n; do printf '%s:%s\n' "$f" "$n"; done
+  done >&2
   echo "possible secret in tracked files" >&2; exit 1
 fi
-if [ "${skipped_rebuild:-}" = 1 ]; then echo "ok (WARNING: bundle rebuild SKIPPED)"; else echo ok; fi
+skipped=
+[ "${skipped_validate:-}" = 1 ] && skipped="validate"
+[ "${skipped_rebuild:-}" = 1 ] && skipped="${skipped:+$skipped, }bundle rebuild"
+if [ -n "$skipped" ]; then echo "ok (WARNING: SKIPPED $skipped)"; else echo ok; fi
