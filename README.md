@@ -99,8 +99,12 @@ yet; run the router through the launcher above so both come from the bundle.
 (`bun build --target=bun`) from the release tag recorded in
 `plugins/tilori/vendor/SOURCE`, together with the commit, Bun version and
 SHA-256. `tests/check.sh` checks the checksum and rebuilds the bundle from the
-pinned tag, failing unless it matches byte for byte. To update it, run
-`sh tools/bundle-agent.sh <tag>` and bump the plugin version.
+pinned tag, failing unless it matches byte for byte. To update it for a
+release, run `sh tools/release.sh <tag> <plugin-version>` on a clean branch: it
+checks the tag is on tilori-agent main and that the release's checksum asset
+came from the release workflow, rebuilds and verifies the bundle against that
+asset, bumps the plugin version and runs the full checks, then prints a
+summary for the PR. It never commits or pushes.
 
 Which CLI the plugin runs, in order:
 1. `TILORI_AGENT_BIN`, if it is an absolute path (for a development checkout);
@@ -166,6 +170,7 @@ later.
 ```sh
 sh tests/check.sh           # plugin + marketplace validation, shell syntax, bundle checksum + rebuild, hostile cwd, secret scan
 sh tools/bundle-agent.sh <tag>   # rebuild vendor/ from a tilori-agent release tag
+sh tools/release.sh <tag> <plugin-version>   # the whole re-bundle for a plugin release, checked
 claude --plugin-dir ./plugins/tilori   # load for one session
 ```
 
