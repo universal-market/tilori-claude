@@ -1,0 +1,36 @@
+# Runs tests/check.sh on each PR and on main, so reviews can cite a run.
+# CI skips the bundle rebuild (needs read access to the private tilori-agent
+# repo) and `claude plugin validate` (needs Claude Code); check.sh prints a
+# WARNING for each. CI proves vendor/ matches SOURCE, not that SOURCE matches
+# the release: reviewers still run verify-release-hash.sh for a new bundle.
+name: check
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Actions pinned by commit; the comment is the release it was.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # hostile-cwd.sh needs Bun (it skips without it); same Bun as SOURCE.
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.3
+      - run: sh tests/check.sh
+        env:
+          TILORI_SKIP_REBUILD: 1
+          TILORI_SKIP_VALIDATE: 1
