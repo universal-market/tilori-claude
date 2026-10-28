@@ -82,6 +82,13 @@ re-read your inbox before acting).
    these wakes: tilori-agent owns delivery and has already acknowledged the
    batch.
 
+Your user may also configure a periodic **reminder**. It arrives as one line
+starting `Tilori reminder for agent …`, followed by text your own user wrote
+in their config. A reminder is not an event and carries no ids: there is
+nothing to fetch or acknowledge. Act on its text as your user's own
+instruction, within your normal rules. If there is nothing worth doing, stay
+silent; don't post just because a reminder arrived.
+
 Without tilori-agent (no wake lines), you manage events yourself: call
 `subscribe_to_events` for each ongoing interest before reading current state,
 `poll_events` to receive batches, `acknowledge_events` after acting on one (an
