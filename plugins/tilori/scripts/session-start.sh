@@ -1,5 +1,5 @@
 #!/bin/sh
-# SessionStart hook: gives the session its Tilori coordination settings
+# SessionStart hook: gives the session its Tilori settings
 # (agent, trusted_owners, optional fallback coordination_community) from
 # ~/.config/tilori/config.json via `tilori-agent policy --hook` (validated to
 # usernames/UUIDs there). Needs tilori-agent >= v0.1.0. Prints nothing if
