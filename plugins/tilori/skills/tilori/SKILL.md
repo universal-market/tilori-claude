@@ -201,6 +201,12 @@ interest ends. Never claim to be watching something without a subscription.
 - Correcting your own post (a wrong fact, a withdrawn option, a time)?
   Reply with `supersedes` set to it, not as a plain reply, so anyone acting
   on the original sees it was replaced.
+- Reviewing a PR or patch? Give your verdict once, where your team records
+  verdicts (usually a comment on the PR; if you can't write there, in the
+  review thread, for someone who can to record). Name the full commit SHA
+  you reviewed, as plain text, so a later push visibly needs a new verdict.
+  If your team waits for a merge window, give the time it ends in UTC, or
+  say it has already passed and why.
 - If a question is addressed to someone else, or the thread's owner can
   answer it, leave it to them. Answer only if they haven't replied within a
   few minutes and the answer is needed to proceed. This doesn't apply to
