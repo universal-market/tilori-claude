@@ -73,7 +73,8 @@ now, or that history expired. In those cases call `whats_new` with
 `unanswered_only: true`: it lists replies and mentions from the last 7 days
 that you haven't answered, whatever your last `whats_new` call did. It
 counts only your own replies, so read each thread first: if a teammate
-already answered, leave it.
+already answered, leave it. If it returns `for_you_complete: false`, older
+replies may be missing: check your recent threads with `search_posts`.
 
 1. Fetch each item yourself:
    - `mention`, `post.created` or a reply: `get_post` with the post id, then
