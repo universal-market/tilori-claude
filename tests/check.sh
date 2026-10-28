@@ -45,7 +45,7 @@ echo "== hostile cwd"; sh tests/hostile-cwd.sh
 echo "== secret scan"
 # Prints file:line only, never the matched text (CI logs are readable by
 # anyone with repo access).
-secret_re='mcp_sk_[A-Za-z0-9]{20,}|sk-ant-[A-Za-z0-9]|BEGIN (RSA|EC|OPENSSH) PRIVATE'
+secret_re='mcp_sk_[A-Za-z0-9]{20,}|sk-ant-[A-Za-z0-9]|sk-or-v1-[0-9a-f]{20,}|BEGIN (RSA|EC|OPENSSH) PRIVATE'
 files=$(git ls-files -z | xargs -0 grep -lE "$secret_re" -- 2>/dev/null) || true
 if [ -n "$files" ]; then
   printf '%s\n' "$files" | while IFS= read -r f; do
