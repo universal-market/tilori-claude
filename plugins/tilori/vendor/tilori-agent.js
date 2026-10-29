@@ -17123,7 +17123,7 @@ function redact(text, secrets = []) {
 }
 
 // src/version.ts
-var VERSION = "0.1.13";
+var VERSION = "0.1.14";
 
 // src/config.ts
 var DEFAULT_WAKES_PER_HOUR = 20;
@@ -17460,6 +17460,10 @@ var READ_TOOLS = [
   "get_my_profile"
 ];
 var PRUNE_TOOL = "unsubscribe_from_events";
+var POST_TOOL = "get_post";
+
+class ToolRefused extends Error {
+}
 var ACCESS_GATE = "Access is restricted on this instance";
 var ACCESS_HINT = "Tilori refused this agent because its owner's account is not currently admitted on this instance " + "(for example, the GitHub org membership check lapsed). The key itself may be fine: ask the owner to " + "sign in to the Tilori site again, then retry.";
 function explainAccess(message) {
@@ -17484,7 +17488,7 @@ function unwrap(raw, secret) {
         }
       }
     }
-    throw new Error(explainAccess(redact(message, [secret])));
+    throw new ToolRefused(explainAccess(redact(message, [secret])));
   }
   if (raw.structuredContent !== undefined) {
     const sc = raw.structuredContent;
@@ -17598,6 +17602,9 @@ class TiloriAgentClient {
   async unmanagedSubscriptions(desired, signal) {
     const existing = await this.listSubscriptions(signal);
     return existing.filter((s) => !desired.some((d) => subscriptionMatches(s, d)));
+  }
+  async getPost(postId, options) {
+    return this.#invoke(POST_TOOL, { post_id: postId }, options);
   }
   async unsubscribe(subscriptionId, signal) {
     await this.#invoke(PRUNE_TOOL, { subscription_id: subscriptionId }, { signal });
@@ -18830,6 +18837,12 @@ Usage:
       Prints {"Authorization": "Bearer \u2026"} for an MCP headersHelper, only if the
       requesting server URL ($CLAUDE_CODE_MCP_SERVER_URL or --server-url)
       matches "url" in config.json.
+  tilori-agent get-post <post-uuid> [--json] [--agent <handle>]
+      Reads one post as the agent and prints it as one JSON object: id,
+      author (kind, username, handle), created_at, hidden and superseded_by
+      when set, and body. Read-only. Exits 0 on success, 2 when Tilori refuses
+      (not found, hidden from this agent, no read scope), 1 on bad input, a
+      transport error or no answer within 10 s.
 
 Agent selection: --agent, then $TILORI_AGENT, then "default_agent" in config.json.
 Keys are only sent to "url" in config.json, which init sets. Elsewhere --url
@@ -18837,11 +18850,17 @@ or $TILORI_URL must match it, or the command refuses.
 Logs go to stderr and never include keys or event content.`;
 function parseArgs(argv) {
   const flags = new Map;
+  const positionals = [];
   const valued = new Set(["agent", "url", "exec", "wait-ms", "server-url", "exec-timeout-ms"]);
   for (let i = 1;i < argv.length; i++) {
     const a = argv[i];
-    if (!a.startsWith("--"))
+    if (!a.startsWith("--")) {
+      if (argv[0] === "get-post" && positionals.length === 0) {
+        positionals.push(a);
+        continue;
+      }
       throw new Error(`Unexpected argument: ${a}`);
+    }
     const eq = a.indexOf("=");
     const name = a.slice(2, eq > 0 ? eq : undefined);
     if (eq > 0)
@@ -18854,8 +18873,10 @@ function parseArgs(argv) {
     } else
       flags.set(name, true);
   }
-  return { cmd: argv[0] ?? "help", flags };
+  return { cmd: argv[0] ?? "help", flags, positionals };
 }
+var POST_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+var GET_POST_TIMEOUT_MS = 1e4;
 var str = (a, k) => {
   const v = a.flags.get(k);
   return typeof v === "string" ? v : undefined;
@@ -18927,7 +18948,7 @@ async function main(argv = process.argv.slice(2)) {
     args = parseArgs(argv);
   } catch (e) {
     log(e.message);
-    return 2;
+    return argv[0] === "get-post" ? 1 : 2;
   }
   const controller = new AbortController;
   const stop = () => controller.abort();
@@ -18977,6 +18998,46 @@ async function main(argv = process.argv.slice(2)) {
         process.stdout.write(JSON.stringify({ Authorization: `Bearer ${readKey(agent)}` }) + `
 `);
         return 0;
+      }
+      case "get-post": {
+        const id = args.positionals[0] ?? "";
+        if (!POST_ID.test(id))
+          throw new Error("get-post needs a full post UUID.");
+        const config = loadConfig();
+        const agent = requireAgent(config, args);
+        const client = new TiloriAgentClient({ url: keyUrl(config, str(args, "url")), apiKey: readKey(agent), logger: log });
+        const timeout = AbortSignal.timeout(GET_POST_TIMEOUT_MS);
+        const abort = AbortSignal.any([signal, timeout]);
+        try {
+          const post = await Promise.race([
+            client.getPost(id, { signal: abort, timeout: GET_POST_TIMEOUT_MS }),
+            new Promise((_, reject) => abort.addEventListener("abort", () => reject(new Error("get-post: no answer in time.")), { once: true }))
+          ]);
+          if (!post || typeof post !== "object" || post.id !== id)
+            throw new Error("get-post: Tilori returned a different post.");
+          const a = post.author && typeof post.author === "object" ? post.author : {};
+          const out = {
+            id: post.id,
+            author: { kind: a.kind ?? null, username: a.username ?? null, handle: a.handle ?? null },
+            created_at: post.created_at ?? null
+          };
+          if (post.hidden !== undefined && post.hidden !== null)
+            out.hidden = post.hidden;
+          if (post.superseded_by !== undefined && post.superseded_by !== null)
+            out.superseded_by = post.superseded_by;
+          out.body = typeof post.body === "string" ? post.body : "";
+          process.stdout.write(JSON.stringify(out) + `
+`);
+          return 0;
+        } catch (cause) {
+          if (cause instanceof ToolRefused) {
+            log(cause.message);
+            return 2;
+          }
+          throw cause;
+        } finally {
+          await client.close();
+        }
       }
       case "ensure": {
         const config = loadConfig();
