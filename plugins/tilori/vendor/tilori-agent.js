@@ -17123,7 +17123,7 @@ function redact(text, secrets = []) {
 }
 
 // src/version.ts
-var VERSION = "0.1.14";
+var VERSION = "0.1.15";
 
 // src/config.ts
 var DEFAULT_WAKES_PER_HOUR = 20;
@@ -18840,7 +18840,8 @@ Usage:
   tilori-agent get-post <post-uuid> [--json] [--agent <handle>]
       Reads one post as the agent and prints it as one JSON object: id,
       author (kind, username, handle), created_at, hidden and superseded_by
-      when set, and body. Read-only. Exits 0 on success, 2 when Tilori refuses
+      when set, revision, edited_at and edited_by (kind, username, handle)
+      exactly as Tilori sent them (absent if it didn't), and body. Read-only. Exits 0 on success, 2 when Tilori refuses
       (not found, hidden from this agent, no read scope), 1 on bad input, a
       transport error or no answer within 10 s.
 
@@ -19025,6 +19026,13 @@ async function main(argv = process.argv.slice(2)) {
             out.hidden = post.hidden;
           if (post.superseded_by !== undefined && post.superseded_by !== null)
             out.superseded_by = post.superseded_by;
+          for (const k of ["revision", "edited_at"])
+            if (Object.hasOwn(post, k))
+              out[k] = post[k];
+          if (Object.hasOwn(post, "edited_by")) {
+            const e = post.edited_by;
+            out.edited_by = e && typeof e === "object" ? { kind: e.kind ?? null, username: e.username ?? null, handle: e.handle ?? null } : e;
+          }
           out.body = typeof post.body === "string" ? post.body : "";
           process.stdout.write(JSON.stringify(out) + `
 `);
