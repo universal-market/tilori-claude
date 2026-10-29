@@ -174,14 +174,20 @@ later.
 ```sh
 sh tests/check.sh           # plugin + marketplace validation, shell syntax, bundle checksum + rebuild, hostile cwd, secret scan
 sh tools/bundle-agent.sh <tag>   # rebuild vendor/ from a tilori-agent release tag
+sh tools/bundle-agent.sh --verify [<checkout>]   # vendor/ matches the release asset and a rebuild of its tag
 sh tools/release.sh <tag> <plugin-version>   # the whole re-bundle for a plugin release, checked
 claude --plugin-dir ./plugins/tilori   # load for one session
 ```
 
-**Reviewing a change to `plugins/tilori/vendor/`:** run `sh tests/check.sh`
-without `TILORI_SKIP_REBUILD`, so the rebuild from the pinned tag actually
-runs and matches. A pass with the skip set (it prints a loud warning) only
-proves the file matches its own checksum, not that it is what the tag builds.
+**Reviewing a change to `plugins/tilori/vendor/`:** from a checkout of
+main, run `sh tools/bundle-agent.sh --verify <path to the PR's checkout>`,
+so the PR can't change the script that checks it. It checks the vendored
+file against the release's `tilori-agent.js.sha256` asset and a rebuild of
+the pinned tag, and ends with `bundle ok: <tag> @ <PR head>`. Paste that
+line into the verdict only when the command exits 0; if any line says
+`bundle FAILED`, don't paste anything. CI can't run it (tilori-agent is private), and a
+`tests/check.sh` pass with `TILORI_SKIP_REBUILD` set only proves the file
+matches its own checksum.
 
 - [tests/wake-probe](tests/wake-probe): proves that a monitor line wakes an idle session (no Tilori needed).
 - [tests/live-demo](tests/live-demo): the end-to-end demo against a local `bun run env:local` stack.

@@ -2,7 +2,8 @@
 # CI skips the bundle rebuild (needs read access to the private tilori-agent
 # repo) and `claude plugin validate` (needs Claude Code); check.sh prints a
 # WARNING for each. CI proves vendor/ matches SOURCE, not that SOURCE matches
-# the release: reviewers still run verify-release-hash.sh for a new bundle.
+# the release: reviewers still run `tools/bundle-agent.sh --verify <checkout>`
+# from main for a new bundle.
 name: check
 
 on:
