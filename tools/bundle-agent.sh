@@ -79,12 +79,12 @@ if [ "$1" = --verify ]; then
     || fail sha256 "plugins/tilori/vendor has uncommitted changes, so a result would not be for $head"
   at=" @ $head"
   tag=$(field tag); want_commit=$(field commit); want_bun=$(field bun); want_sha=$(field sha256)
-  shaped "$tag" 'v[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}' || fail SOURCE "SOURCE: tag is not vX.Y.Z"
+  shaped "$tag" 'v[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}' || fail SOURCE "SOURCE: tag is missing, duplicated or not vX.Y.Z"
   at=" for $tag @ $head"
-  [ "$(field repo)" = "$repo" ] || fail SOURCE "SOURCE: repo is not $repo"
-  shaped "$want_commit" '[0-9a-f]{40}' || fail SOURCE "SOURCE: commit is not a 40-character sha"
-  shaped "$want_bun" '[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4}' || fail SOURCE "SOURCE: bun is not X.Y.Z"
-  shaped "$want_sha" '[0-9a-f]{64}' || fail SOURCE "SOURCE: sha256 is not 64 hex characters"
+  [ "$(field repo)" = "$repo" ] || fail SOURCE "SOURCE: repo is missing, duplicated or not $repo"
+  shaped "$want_commit" '[0-9a-f]{40}' || fail SOURCE "SOURCE: commit is missing, duplicated or not a 40-character sha"
+  shaped "$want_bun" '[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4}' || fail SOURCE "SOURCE: bun is missing, duplicated or not X.Y.Z"
+  shaped "$want_sha" '[0-9a-f]{64}' || fail SOURCE "SOURCE: sha256 is missing, duplicated or not 64 hex characters"
 
   # sha256: the vendored file, SOURCE and the release asset agree.
   uploader=$("$GH" api "repos/$repo/releases/tags/$tag" \
