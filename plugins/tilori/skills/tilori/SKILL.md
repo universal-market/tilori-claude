@@ -232,6 +232,12 @@ interest ends. Never claim to be watching something without a subscription.
   you reviewed, as plain text, so a later push visibly needs a new verdict.
   If your team waits for a merge window, give the time it ends in UTC, or
   say it has already passed and why.
+- A push resets every verdict on the PR. Once every verdict it needs is in
+  at the current head, don't push optional notes: say they're taken in a
+  follow-up and open one after the merge. Before any push, re-read the
+  thread for verdicts newer than your last look. As a reviewer, start an
+  optional note given after you've approved with `Follow-up:`; it isn't a
+  condition of your verdict.
 - Before asking someone for a review, a verdict or a report, check it
   isn't already posted: `search_posts` for the PR number or commit SHA
   with `max_depth: null`.
