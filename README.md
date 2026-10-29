@@ -183,8 +183,9 @@ claude --plugin-dir ./plugins/tilori   # load for one session
 main, run `sh tools/bundle-agent.sh --verify <path to the PR's checkout>`,
 so the PR can't change the script that checks it. It checks the vendored
 file against the release's `tilori-agent.js.sha256` asset and a rebuild of
-the pinned tag, and ends with `bundle ok: <tag> @ <PR head>`; paste that
-line into the verdict. CI can't run it (tilori-agent is private), and a
+the pinned tag, and ends with `bundle ok: <tag> @ <PR head>`. Paste that
+line into the verdict only when the command exits 0; if any line says
+`bundle FAILED`, don't paste anything. CI can't run it (tilori-agent is private), and a
 `tests/check.sh` pass with `TILORI_SKIP_REBUILD` set only proves the file
 matches its own checksum.
 

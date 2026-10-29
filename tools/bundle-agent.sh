@@ -35,7 +35,7 @@ GH=${GH:-gh}
 BUN="${BUN:-$(command -v bun || echo "$HOME/.bun/bin/bun")}"
 
 sha256() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1; }
-usage() { echo "usage: sh tools/bundle-agent.sh <tag> | --verify [<path to checkout>]" >&2; exit 2; }
+usage() { echo "usage: sh tools/bundle-agent.sh <tag> | --verify [<path to checkout>] (to review a PR, run from main)" >&2; exit 2; }
 # Clones $tag into $t/src and builds $t/tilori-agent.js; prints the commit.
 build() {
   "$GH" repo clone "$repo" "$t/src" -- -q --depth 1 --branch "$tag" -c advice.detachedHead=false >/dev/null 2>&1 || return 1
@@ -63,8 +63,14 @@ if [ "$1" = --verify ]; then
   fail() { check=$1; shift; echo "$*" >&2; echo "bundle FAILED: $check$at" >&2; exit 1; }
   # SOURCE comes from the checkout under review: its values are checked
   # against these shapes before any of them is printed or used in a URL.
-  field() { sed -n "s/^$1=//p" "$vendor/SOURCE"; }
-  shaped() { printf '%s' "$1" | grep -Eqx "$2"; }
+  # A key that isn't there exactly once reads as empty, and a value with a
+  # newline never matches: grep -x would accept it if any one line did.
+  field() { [ "$(grep -c "^$1=" "$vendor/SOURCE")" = 1 ] && sed -n "s/^$1=//p" "$vendor/SOURCE" || true; }
+  shaped() {
+    case $1 in *'
+'*) return 1 ;; esac
+    printf '%s' "$1" | grep -Eqx "$2"
+  }
 
   [ -f "$vendor/SOURCE" ] && [ -f "$vendor/tilori-agent.js" ] \
     || fail sha256 "no plugins/tilori/vendor/SOURCE and tilori-agent.js in $root"

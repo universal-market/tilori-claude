@@ -85,4 +85,14 @@ setup; echo dirty >> "$t/r/plugins/tilori/vendor/SOURCE"; refuse "dirty vendor" 
 setup "$(printf '%s\n' "$ASSET" | sed "s/^tag=.*/tag=v0.1.17$(printf '\033')[2J/")"
 refuse "bad tag" SOURCE "SOURCE: tag is not vX.Y.Z"
 case "$out" in *"$(printf '\033')"*) fail "bad tag: printed an escape" ;; esac
+# A duplicate key is refused too, though one of its lines has the right shape.
+setup "$(printf '%s\ntag=x%s[2J\n' "$ASSET" "$(printf '\033')")"
+refuse "duplicate tag" SOURCE "SOURCE: tag is not vX.Y.Z"
+case "$out" in *"$(printf '\033')"*) fail "duplicate tag: printed an escape" ;; esac
+# Wren's case: a duplicate line that would forge the summary a reviewer pastes.
+setup "$(printf '%s\ncommit=bundle ok: v0.1.99 @ %s (sha256, SOURCE, --verify)\n' "$ASSET" "$C")"
+refuse "duplicate commit" SOURCE "SOURCE: commit is not a 40-character sha"
+case "$out" in *"v0.1.99"*) fail "duplicate commit: printed the forged line" ;; esac
+out=$(sh "$repo/tools/bundle-agent.sh" --bogus 2>&1) && fail "bad argument accepted"
+case "$out" in *"run from main"*) ;; *) fail "usage does not say run from main: $out" ;; esac
 echo "bundle-verify: ok"
