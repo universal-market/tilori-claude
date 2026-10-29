@@ -43,6 +43,7 @@ else
 fi
 echo "== hostile cwd"; sh tests/hostile-cwd.sh
 echo "== monitor env"; sh tests/monitor-env.sh
+echo "== prompt signal"; sh tests/prompt-signal.sh
 echo "== release script"; sh tests/release.sh
 echo "== provision home"; sh tests/provision-home.sh
 echo "== secret scan"
