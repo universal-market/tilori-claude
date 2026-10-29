@@ -4,7 +4,7 @@
  * a test did on 2026-10-29 (UNI-457). So it takes only a fresh demo home: one
  * with no config.json and no agents/, which is not the user's real config dir.
  */
-import { existsSync, realpathSync } from 'node:fs';
+import { lstatSync, realpathSync } from 'node:fs';
 import { userInfo } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 
@@ -43,7 +43,17 @@ export function checkFreshHome(home: string) {
   const pw = passwdHome();
   if (pw && dir === real(join(pw, '.config', 'tilori')))
     throw new Error(`Refusing --home ${home}: it is your real Tilori config dir.`);
+  // lstat, so a dangling symlink counts too: writing through it would create
+  // its target.
+  const present = (p: string) => {
+    try {
+      lstatSync(p);
+      return true;
+    } catch {
+      return false;
+    }
+  };
   for (const f of ['config.json', 'agents'])
-    if (existsSync(join(dir, f)))
+    if (present(join(dir, f)))
       throw new Error(`Refusing --home ${home}: it already has ${f}; provision only builds a fresh demo home.`);
 }

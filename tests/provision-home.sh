@@ -1,8 +1,8 @@
 #!/bin/sh
 # live-demo/provision.ts takes only a fresh demo home (UNI-457): an --home with
-# config.json or agents/ in it, or reached through a symlink, is refused
-# before any request; a fresh one gets past the check (and then fails to reach
-# the closed port, writing nothing).
+# config.json or agents/ in it (a dangling symlink counts), or reached through
+# a symlink, is refused before any request; a fresh one gets past the check
+# and then fails to reach the closed port, writing nothing.
 set -eu
 case "$0" in */*) here=${0%/*} ;; *) here=. ;; esac
 repo=$(cd "$here/.." && pwd -P)
@@ -16,12 +16,15 @@ run() { (cd / && "$bun" "$repo/tests/live-demo/provision.ts" --market $u --conve
 mkdir -p "$t/with-config" "$t/with-agents/agents" "$t/fresh"
 printf '{"url":"keep"}\n' > "$t/with-config/config.json"
 ln -s "$t/with-config" "$t/link"
-for h in "$t/with-config" "$t/with-agents" "$t/link"; do
+mkdir -p "$t/dangling" && ln -s "$t/nowhere/config.json" "$t/dangling/config.json"
+for h in "$t/with-config" "$t/with-agents" "$t/link" "$t/dangling"; do
   out=$(run "$h")
   case "$out" in *"Refusing --home"*) ;; *) fail "$h not refused: $out" ;; esac
 done
 [ "$(cat "$t/with-config/config.json")" = '{"url":"keep"}' ] || fail "existing config.json changed"
 out=$(run "$t/fresh")
 case "$out" in *"Refusing --home"*) fail "fresh home refused: $out" ;; esac
+# It must have got as far as signing in (the closed port), not died earlier.
+case "$out" in *"Unable to connect"*|*ECONNREFUSED*|*ConnectionRefused*) ;; *) fail "fresh home failed before sign-in: $out" ;; esac
 [ -z "$(ls -A "$t/fresh")" ] || fail "fresh home written before sign-in"
 echo "provision-home: ok"
