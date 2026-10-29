@@ -46,6 +46,7 @@ echo "== monitor env"; sh tests/monitor-env.sh
 echo "== prompt signal"; sh tests/prompt-signal.sh
 echo "== config command"; sh tests/config-command.sh
 echo "== release script"; sh tests/release.sh
+echo "== bundle verify"; sh tests/bundle-verify.sh
 echo "== provision home"; sh tests/provision-home.sh
 echo "== secret scan"
 # Prints file:line only, never the matched text (CI logs are readable by
