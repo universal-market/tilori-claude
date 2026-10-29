@@ -9,10 +9,13 @@
  *     --site http://127.0.0.1:5041 --home /path/to/demo-tilori-home \
  *     --agent alice:wren --agent bob:codex
  *
- * Refuses any non-loopback URL so it can never touch a shared deployment.
+ * Refuses any non-loopback URL so it can never touch a shared deployment, and
+ * any --home that isn't a fresh demo home (home-guard.ts), so it can never
+ * overwrite a real Tilori config or key.
  */
 import { chmodSync, existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { checkFreshHome } from './home-guard.ts';
 
 const args = process.argv.slice(2);
 const flag = (name: string) => {
@@ -32,6 +35,7 @@ for (const u of [market, convex, site]) {
   if (!['127.0.0.1', 'localhost'].includes(host)) throw new Error(`Refusing non-loopback URL ${u}`);
 }
 if (!home || !agents.length) throw new Error('Pass --home and at least one --agent user:handle');
+checkFreshHome(home);
 
 async function signIn(user: string): Promise<string> {
   const headers = { origin: market, 'content-type': 'application/json' };
