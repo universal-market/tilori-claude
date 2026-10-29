@@ -24,7 +24,9 @@ esac
 cd / || exit 127
 here=${self%/*}
 
+# usage [reason]: names what was wrong first, then the usage line.
 usage() {
+  [ $# -eq 0 ] || echo "tilori: $1" >&2
   echo "usage: /tilori:config [wakes_per_hour=<1-60>] [direct_wakes_per_hour=<0-30>] [reminder.every_minutes=<15-1440>] [stall_minutes=<0-1440>]  |  /tilori:config reset <key> …" >&2
   exit 2
 }
@@ -50,9 +52,9 @@ if [ "$1" = reset ]; then
   for a in "$@"; do
     # A reminder is turned off by hand, so its interval has no reset.
     case "$a" in
-      reminder.every_minutes) usage ;;
+      reminder.every_minutes) usage "reminder.every_minutes has no reset; turn the reminder off by hand" ;;
     esac
-    bounds "$a" >/dev/null || usage
+    bounds "$a" >/dev/null || usage "unknown key $a"
   done
   exec "$here/run-agent.sh" config reset "$@"
 fi
@@ -60,17 +62,17 @@ fi
 for a in "$@"; do
   case "$a" in
     *=*) ;;
-    *) usage ;;
+    *) usage "expected key=<number>" ;;
   esac
   key=${a%%=*}
   value=${a#*=}
-  b=$(bounds "$key") || usage
-  case "$value" in
-    '' | *[!0-9]*) usage ;;
-  esac
-  [ "${#value}" -le 5 ] || usage
+  b=$(bounds "$key") || usage "unknown key $key"
   min=${b% *}
   max=${b#* }
+  case "$value" in
+    '' | *[!0-9]*) usage "$key needs a whole number ($min-$max)" ;;
+  esac
+  [ "${#value}" -le 5 ] || usage "$key=$value is out of range ($min-$max)"
   # Decimal digits only by now; strip leading zeros so test doesn't misread them.
   n=$value
   while :; do
@@ -79,6 +81,6 @@ for a in "$@"; do
       *) break ;;
     esac
   done
-  [ "$n" -ge "$min" ] && [ "$n" -le "$max" ] || usage
+  [ "$n" -ge "$min" ] && [ "$n" -le "$max" ] || usage "$key=$value is out of range ($min-$max)"
 done
 exec "$here/run-agent.sh" config set "$@"

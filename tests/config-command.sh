@@ -62,5 +62,14 @@ done
 [ "$(run reset url)" = 2 ] || fail "reset url"
 [ "$(run reset reminder.every_minutes)" = 2 ] || fail "reset reminder"
 [ "$(run show wakes_per_hour=35)" = 2 ] || fail "show with args"
+# Each refusal names what was wrong before the usage line.
+reason() { (cd "$p" && env -i HOME="$t" PATH=".:/usr/bin:/bin" TILORI_AGENT_BIN="$stub" /bin/sh "$script" "$@" 2>&1 >/dev/null | head -1) || :; }
+[ "$(reason wakes_per_hour=500)" = "tilori: wakes_per_hour=500 is out of range (1-60)" ] || fail "range reason: $(reason wakes_per_hour=500)"
+[ "$(reason wakes_per_hour=999999)" = "tilori: wakes_per_hour=999999 is out of range (1-60)" ] || fail "long reason"
+[ "$(reason stall_minutes=x)" = "tilori: stall_minutes needs a whole number (0-1440)" ] || fail "number reason: $(reason stall_minutes=x)"
+[ "$(reason foo=1)" = "tilori: unknown key foo" ] || fail "key reason: $(reason foo=1)"
+[ "$(reason reset foo)" = "tilori: unknown key foo" ] || fail "reset key reason"
+[ "$(reason reset reminder.every_minutes)" = "tilori: reminder.every_minutes has no reset; turn the reminder off by hand" ] || fail "reminder reason"
+[ "$(reason --agent)" = "tilori: expected key=<number>" ] || fail "shape reason: $(reason --agent)"
 [ ! -e "$t/evil" ] || fail "ran a command from the project directory"
 echo "config-command: ok"
