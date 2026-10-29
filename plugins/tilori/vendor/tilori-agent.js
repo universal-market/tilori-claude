@@ -7091,7 +7091,7 @@ import { existsSync as existsSync2, readFileSync as readFileSync2, renameSync as
 import { join as join2 } from "path";
 
 // src/version.ts
-var VERSION = "0.1.16";
+var VERSION = "0.1.17";
 
 // src/config.ts
 var DEFAULT_WAKES_PER_HOUR = 20;
@@ -7515,6 +7515,21 @@ async function serveRouter(router, path = socketPath(), log = () => {}) {
     sock.on("close", () => unregister?.());
     sock.on("error", () => {});
     lines(sock, (msg) => {
+      if (!injector && msg?.op === "usage") {
+        try {
+          if (msg.v !== IPC_VERSION)
+            throw new Error("Expected a v1 usage message.");
+          const agent = validateHandle(String(msg.agent ?? ""));
+          const usage = router.usage(agent);
+          if (!usage)
+            throw new Error(`This router does not serve agent ${agent}.`);
+          send(sock, { op: "usage", agent, ...usage });
+        } catch (cause) {
+          send(sock, { op: "error", message: cause instanceof Error ? cause.message : "usage failed" });
+        }
+        sock.end();
+        return;
+      }
       if (!injector) {
         try {
           if (msg?.op !== "register" || msg.v !== IPC_VERSION)
@@ -7612,6 +7627,39 @@ function attachToRouter(agent, injector, path = socketPath(), onRegistered = () 
         if (result === "gone")
           sock.end();
       }
+    });
+  });
+}
+var count = (v) => Number.isInteger(v) && v >= 0 ? v : null;
+function routerUsage(agent, path = socketPath()) {
+  if (!routerAvailable(path))
+    return Promise.resolve(null);
+  const handle = validateHandle(agent);
+  return new Promise((resolve) => {
+    const sock = createConnection(path);
+    const done = (u) => {
+      clearTimeout(timer);
+      sock.destroy();
+      resolve(u);
+    };
+    const timer = setTimeout(() => done(null), 2000);
+    sock.on("error", () => done(null));
+    sock.on("close", () => done(null));
+    sock.on("connect", () => send(sock, { op: "usage", v: IPC_VERSION, agent: handle }));
+    lines(sock, (msg) => {
+      if (msg?.op !== "usage" || msg.agent !== handle)
+        return done(null);
+      const pair = (p) => {
+        const used = count(p?.used);
+        const limit = count(p?.limit);
+        return used === null || limit === null ? null : { used, limit };
+      };
+      const wakes = pair(msg.wakes);
+      const direct = msg.direct === null ? null : pair(msg.direct);
+      const held = count(msg.held);
+      if (!wakes || held === null || msg.direct !== null && !direct)
+        return done(null);
+      done({ wakes, direct, held });
     });
   });
 }
@@ -18035,14 +18083,23 @@ import { randomUUID as randomUUID2 } from "crypto";
 
 // src/ratelimit.ts
 class WakeLimiter {
-  perHour;
   now;
   #times = [];
+  #perHour;
   constructor(perHour, now = Date.now) {
-    this.perHour = perHour;
     this.now = now;
+    this.#perHour = WakeLimiter.#check(perHour);
+  }
+  static #check(perHour) {
     if (!Number.isInteger(perHour) || perHour < 1)
       throw new Error("wakes_per_hour must be a positive integer.");
+    return perHour;
+  }
+  get perHour() {
+    return this.#perHour;
+  }
+  resize(perHour) {
+    this.#perHour = WakeLimiter.#check(perHour);
   }
   #prune() {
     const cutoff = this.now() - 3600000;
@@ -18051,16 +18108,16 @@ class WakeLimiter {
   }
   waitMs() {
     this.#prune();
-    if (this.#times.length < this.perHour)
+    if (this.#times.length < this.#perHour)
       return 0;
     return Math.max(1, this.#times[0] + 3600000 - this.now());
   }
   waitAfterNextMs() {
     this.#prune();
     const times = [...this.#times, this.now()];
-    if (times.length < this.perHour)
+    if (times.length < this.#perHour)
       return 0;
-    return Math.max(1, times[times.length - this.perHour] + 3600000 - this.now());
+    return Math.max(1, times[times.length - this.#perHour] + 3600000 - this.now());
   }
   record() {
     this.#prune();
@@ -18142,6 +18199,7 @@ class Router {
         cfg,
         limiter: new WakeLimiter(cfg.wakesPerHour ?? DEFAULT_WAKES_PER_HOUR, this.#now),
         directLimiter: directLimiter(cfg.directWakesPerHour, this.#now),
+        directOff: null,
         directSubs: new Set,
         capHeld: new Set,
         recent: new Map,
@@ -18192,6 +18250,55 @@ class Router {
       st.retryAt = 0;
       this.#wake(st);
     }
+  }
+  usage(handle) {
+    const st = this.#agents.get(handle);
+    if (!st)
+      return null;
+    const d = st.directLimiter;
+    return {
+      wakes: { used: st.limiter.used, limit: st.limiter.perHour },
+      direct: d ? { used: d.used, limit: d.perHour } : null,
+      held: st.capHeld.size ? st.stats.delayed : 0
+    };
+  }
+  reload(handle, live) {
+    const st = this.#agents.get(handle);
+    if (!st)
+      return [];
+    const changed = [];
+    const note = (key, from, to) => {
+      if (from !== to)
+        changed.push(`${key} ${from} -> ${to}`);
+    };
+    note("wakes_per_hour", st.limiter.perHour, live.wakesPerHour);
+    st.limiter.resize(live.wakesPerHour);
+    note("direct_wakes_per_hour", st.directLimiter?.perHour ?? 0, live.directWakesPerHour);
+    if (live.directWakesPerHour === 0) {
+      st.directOff = st.directLimiter ?? st.directOff;
+      st.directLimiter = null;
+    } else {
+      st.directLimiter = st.directLimiter ?? st.directOff ?? new WakeLimiter(live.directWakesPerHour, this.#now);
+      st.directOff = null;
+      st.directLimiter.resize(live.directWakesPerHour);
+    }
+    note("stall_minutes", st.cfg.stallMinutes ?? 0, live.stallMinutes);
+    let reminder = st.cfg.reminder;
+    if (reminder && live.reminderEveryMs !== undefined && live.reminderEveryMs !== reminder.everyMs) {
+      note("reminder.every_minutes", reminder.everyMs / 60000, live.reminderEveryMs / 60000);
+      reminder = { ...reminder, everyMs: live.reminderEveryMs };
+      st.reminderAt = Math.min(st.reminderAt, Date.now() + live.reminderEveryMs);
+    }
+    st.cfg = {
+      ...st.cfg,
+      wakesPerHour: live.wakesPerHour,
+      directWakesPerHour: live.directWakesPerHour,
+      stallMinutes: live.stallMinutes,
+      reminder
+    };
+    if (changed.length)
+      this.#wake(st);
+    return changed;
   }
   injectorCount(handle) {
     return this.#agents.get(handle)?.injectors.length ?? 0;
@@ -18699,6 +18806,181 @@ class Router {
   }
 }
 
+// src/settings.ts
+import { watch } from "fs";
+import { basename, dirname as dirname3 } from "path";
+var MAX_SET_WAKES = 60;
+var MAX_SET_DIRECT = 30;
+var MAX_REMINDER_MINUTES = 1440;
+var SETTABLE = [
+  {
+    key: "wakes_per_hour",
+    min: 1,
+    max: MAX_SET_WAKES,
+    fallback: DEFAULT_WAKES_PER_HOUR,
+    note: "wakes per rolling hour",
+    get: (s) => s.wakes_per_hour,
+    put: (s, v) => v === undefined ? delete s.wakes_per_hour : s.wakes_per_hour = v
+  },
+  {
+    key: "direct_wakes_per_hour",
+    min: 0,
+    max: MAX_SET_DIRECT,
+    fallback: DEFAULT_DIRECT_WAKES_PER_HOUR,
+    note: "extra wakes for mentions and DMs past the cap; 0 = off",
+    get: (s) => s.direct_wakes_per_hour,
+    put: (s, v) => v === undefined ? delete s.direct_wakes_per_hour : s.direct_wakes_per_hour = v
+  },
+  {
+    key: "reminder.every_minutes",
+    min: MIN_REMINDER_MINUTES,
+    max: MAX_REMINDER_MINUTES,
+    fallback: null,
+    note: "minutes between reminders; the reminder itself is set up by hand",
+    get: (s) => s.reminder?.every_minutes,
+    put: (s, v) => {
+      if (!s.reminder || v === undefined)
+        throw new Error("reminder.every_minutes needs a reminder set up by hand in config.json.");
+      s.reminder.every_minutes = v;
+    }
+  },
+  {
+    key: "stall_minutes",
+    min: 0,
+    max: MAX_STALL_MINUTES,
+    fallback: DEFAULT_STALL_MINUTES,
+    note: "minutes blocked on a prompt before the router logs it; 0 = off",
+    get: (s) => s.stall_minutes,
+    put: (s, v) => v === undefined ? delete s.stall_minutes : s.stall_minutes = v
+  }
+];
+function settable(key) {
+  const k = SETTABLE.find((x) => x.key === key);
+  if (!k)
+    throw new Error(`${key} can't be set here. Settable: ${SETTABLE.map((x) => x.key).join(", ")}.`);
+  return k;
+}
+function parseAssignment(arg) {
+  const m = /^([a-z_.]{1,40})=(\d{1,5})$/.exec(arg);
+  if (!m)
+    throw new Error(`Expected key=<whole number>, got: ${arg.slice(0, 60)}`);
+  const key = settable(m[1]);
+  const value = Number(m[2]);
+  if (value < key.min || value > key.max)
+    throw new Error(`${key.key} must be from ${key.min} to ${key.max}.`);
+  return { key, value };
+}
+function entry(config, agent) {
+  const s = config.agents?.[agent];
+  if (!s || typeof s !== "object" || Array.isArray(s))
+    throw new Error(`No agent "${agent}" in config.json.`);
+  return s;
+}
+function applyChanges(agent, edits, path = configPath()) {
+  const config = loadConfig(path);
+  const s = entry(config, agent);
+  const changes = [];
+  for (const { key, value } of edits) {
+    if (value === undefined && key.fallback === null)
+      throw new Error(`${key.key} can't be reset; edit config.json by hand to turn it off.`);
+    const from = key.get(s);
+    key.put(s, value);
+    changes.push({ key: key.key, from, to: value });
+  }
+  liveSettings(s);
+  saveConfig(config, path);
+  return changes;
+}
+var resetEdit = (key) => ({ key: settable(key), value: undefined });
+function liveSettings(s = {}) {
+  const wakes = s.wakes_per_hour ?? DEFAULT_WAKES_PER_HOUR;
+  if (!Number.isInteger(wakes) || wakes < 1)
+    throw new Error("wakes_per_hour must be a positive integer.");
+  const direct = s.direct_wakes_per_hour ?? DEFAULT_DIRECT_WAKES_PER_HOUR;
+  if (!Number.isInteger(direct) || direct < 0)
+    throw new Error("direct_wakes_per_hour must be a non-negative integer.");
+  return {
+    wakesPerHour: wakes,
+    directWakesPerHour: direct,
+    reminderEveryMs: reminderSettings(s)?.everyMs,
+    stallMinutes: stallMinutes(s.stall_minutes)
+  };
+}
+function withinReloadCeiling(s = {}) {
+  for (const k of SETTABLE) {
+    const v = k.get(s);
+    if (typeof v === "number" && v > k.max) {
+      throw new Error(`${k.key} ${v} is above ${k.max}, the most a running router takes; restart to apply it.`);
+    }
+  }
+}
+function followConfig(router, log, signal, path = configPath(), debounceMs = 500) {
+  if (signal?.aborted)
+    return;
+  let timer;
+  let lastError = "";
+  const reload = () => {
+    let next;
+    try {
+      const config = loadConfig(path);
+      next = new Map(router.agents.map((h) => {
+        try {
+          withinReloadCeiling(config.agents?.[h]);
+          return [h, liveSettings(config.agents?.[h])];
+        } catch (cause) {
+          throw new Error(`[${h}] ${cause instanceof Error ? cause.message : String(cause)}`);
+        }
+      }));
+    } catch (cause) {
+      const msg = cause instanceof Error ? cause.message : String(cause);
+      if (msg !== lastError)
+        log(`config.json not reloaded, keeping current settings: ${msg}`);
+      lastError = msg;
+      return;
+    }
+    lastError = "";
+    for (const [handle, live] of next) {
+      const changed = router.reload(handle, live);
+      if (changed.length)
+        log(`[${handle}] settings reloaded: ${changed.join(", ")}`);
+    }
+  };
+  let watcher;
+  try {
+    watcher = watch(dirname3(path), (_event, name) => {
+      if (name && name !== basename(path))
+        return;
+      clearTimeout(timer);
+      timer = setTimeout(reload, debounceMs);
+    });
+  } catch (cause) {
+    log(`config.json changes need a restart (can't watch it: ${cause instanceof Error ? cause.message : String(cause)})`);
+    return;
+  }
+  watcher.on("error", () => {});
+  signal?.addEventListener("abort", () => {
+    clearTimeout(timer);
+    watcher.close();
+  }, { once: true });
+}
+function showText(agent, s, usage) {
+  const lines = [`${agent}:`];
+  for (const k of SETTABLE) {
+    const v = k.get(s);
+    const value = v !== undefined ? String(v) : k.fallback === null ? "off" : `${k.fallback} (default)`;
+    lines.push(`  ${k.key} = ${value}    [${k.min}-${k.max}] ${k.note}`);
+  }
+  if (!usage)
+    lines.push("  this hour: not reported (no router running)");
+  else {
+    const direct = usage.direct ? `, direct ${usage.direct.used} of ${usage.direct.limit}` : "";
+    const held = usage.held ? `, ${usage.held} event${usage.held === 1 ? "" : "s"} held` : "";
+    lines.push(`  this hour: wakes ${usage.wakes.used} of ${usage.wakes.limit} used${held}${direct}`);
+  }
+  return lines.join(`
+`);
+}
+
 // src/update-notice.ts
 import { closeSync, constants, fstatSync, openSync, readSync } from "fs";
 var VERSION2 = /^\d{1,6}\.\d{1,6}\.\d{1,6}$/;
@@ -18908,6 +19190,7 @@ async function runNotifyLines(opts) {
     opts.signal?.addEventListener("abort", onAbort, { once: true });
     const router = directRouter(opts);
     router.register(opts.agent, injector);
+    followConfig(router, log, stop.signal);
     log(`watching Tilori directly for ${opts.agent}`);
     const check = setInterval(async () => {
       if (!stop.signal.aborted && await usable()) {
@@ -18949,9 +19232,10 @@ Usage:
       One line per agent with a key: "blocked on a prompt since HH:MM UTC" while
       its session waits on a permission or elicitation prompt, else "ok", or
       "ok (this client can't report prompts)" when its plugin sends no such
-      signal, or "ok (prompts not tracked: no router running)". Reads only two file times in the router's run directory. The
-      router also logs a blocked session once, after stall_minutes (default
-      10, 0 = off) with wakes arriving.
+      signal, or "ok (prompts not tracked: no router running)". Reads only
+      two file times in the router's run directory. The router also logs a
+      blocked session once, after stall_minutes (default 10, 0 = off) with
+      wakes arriving.
   tilori-agent ensure [--agent <handle>] [--prune [--yes]]
       Creates or renews the agent's subscriptions and prints them, plus any
       "unmanaged" ones config does not ask for (nothing polls those).
@@ -18967,6 +19251,17 @@ Usage:
       Prints {"Authorization": "Bearer \u2026"} for an MCP headersHelper, only if the
       requesting server URL ($CLAUDE_CODE_MCP_SERVER_URL or --server-url)
       matches "url" in config.json.
+  tilori-agent config [show] [--agent <handle>]
+  tilori-agent config set [--agent <handle>] <key>=<n> [<key>=<n> \u2026]
+  tilori-agent config reset [--agent <handle>] <key> [<key> \u2026]
+      Shows or changes the agent's own wake settings in config.json; a running
+      router applies a change within seconds. Settable keys only:
+        wakes_per_hour (1-60), direct_wakes_per_hour (0-30),
+        reminder.every_minutes (15-1440, for a reminder set up by hand),
+        stall_minutes (0-1440)
+      Everything else in config.json is edited by hand and needs a restart.
+      show also prints this hour's wake counts when a router is running.
+      --agent may only name an agent already in config.json.
   tilori-agent get-post <post-uuid> [--json] [--agent <handle>]
       Reads one post as the agent and prints it as one JSON object: id,
       author (kind, username, handle), created_at, hidden and superseded_by
@@ -18986,7 +19281,7 @@ function parseArgs(argv) {
   for (let i = 1;i < argv.length; i++) {
     const a = argv[i];
     if (!a.startsWith("--")) {
-      if (argv[0] === "get-post" && positionals.length === 0) {
+      if (argv[0] === "get-post" && positionals.length === 0 || argv[0] === "config") {
         positionals.push(a);
         continue;
       }
@@ -19177,6 +19472,26 @@ async function main(argv = process.argv.slice(2)) {
           await client.close();
         }
       }
+      case "config": {
+        const [action = "show", ...rest] = args.positionals;
+        const config = loadConfig();
+        const agent = requireAgent(config, args);
+        if (action === "show") {
+          if (rest.length)
+            throw new Error("config show takes no arguments.");
+          console.log(showText(agent, config.agents?.[agent] ?? {}, await routerUsage(agent)));
+          return 0;
+        }
+        if (action !== "set" && action !== "reset")
+          throw new Error("config needs show, set or reset.");
+        if (!rest.length)
+          throw new Error(`config ${action} needs at least one ${action === "set" ? "key=value" : "key"}.`);
+        const edits = action === "set" ? rest.map(parseAssignment) : rest.map(resetEdit);
+        const shown = (v, key) => v !== undefined ? String(v) : `${SETTABLE.find((k) => k.key === key)?.fallback} (default)`;
+        for (const c of applyChanges(agent, edits))
+          console.log(`${agent}: ${c.key} ${shown(c.from, c.key)} -> ${shown(c.to, c.key)}`);
+        return 0;
+      }
       case "ensure": {
         const config = loadConfig();
         const agent = requireAgent(config, args);
@@ -19259,6 +19574,7 @@ async function main(argv = process.argv.slice(2)) {
         });
         const t = str(args, "exec-timeout-ms") ?? settings.exec_timeout_ms;
         router.register(agent, new ExecInjector(exec, log, { timeoutMs: t === undefined ? undefined : Number(t), signal }));
+        followConfig(router, log, signal);
         await router.run(signal);
         return 0;
       }
@@ -19290,6 +19606,7 @@ async function main(argv = process.argv.slice(2)) {
         const server = await serveRouter(router, socketPath(), log);
         log(`router serving ${handles.join(", ")} on ${socketPath()}`);
         signal.addEventListener("abort", () => server.close(), { once: true });
+        followConfig(router, log, signal);
         await router.run(signal);
         return 0;
       }
