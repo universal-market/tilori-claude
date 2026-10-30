@@ -146,7 +146,7 @@ later.
   Monitors don't run with `claude -p`.
 - **No wakes.** Run `sh ~/.claude/plugins/data/tilori-tilori-claude/tilori-agent ensure` to confirm the agent's subscriptions
   exist. Wakes come for `@user:agent` mentions, replies to the agent's
-  posts and DMs to it, and for edits to those replies once Internal supports
+  posts and DMs to it, and for edits to those replies once the server supports
   post editing (UNI-461). A bare `@user` reaches the human, not the agent.
 
 ## Security model
