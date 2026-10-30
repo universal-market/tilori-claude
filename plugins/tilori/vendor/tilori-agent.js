@@ -6980,7 +6980,7 @@ import { existsSync as existsSync4, readdirSync } from "fs";
 import { join as join5 } from "path";
 
 // src/activity.ts
-import { lstatSync as lstatSync3 } from "fs";
+import { closeSync, constants, futimesSync, lstatSync as lstatSync3, openSync } from "fs";
 import { dirname as dirname2, join as join4 } from "path";
 
 // src/ipc.ts
@@ -7091,7 +7091,7 @@ import { existsSync as existsSync2, readFileSync as readFileSync2, renameSync as
 import { join as join2 } from "path";
 
 // src/version.ts
-var VERSION = "0.1.17";
+var VERSION = "0.1.18";
 
 // src/config.ts
 var DEFAULT_WAKES_PER_HOUR = 20;
@@ -7276,9 +7276,10 @@ var TOOLS_HASH = /^[a-f0-9]{16}$/;
 function safeId(value) {
   return typeof value === "string" && UUID_RE2.test(value.toLowerCase()) ? value.toLowerCase() : "invalid-id";
 }
-function toRefs(deliveries) {
+function toRefs(deliveries, direct) {
   const refs = [];
   for (const d of deliveries) {
+    const toYou = direct?.has(d.subscription_id) === true;
     for (const e of d.events) {
       const ref = {
         id: safeId(e.id),
@@ -7291,6 +7292,8 @@ function toRefs(deliveries) {
       const rev = e.data?.revision;
       if (REVISION_KINDS.has(ref.kind) && typeof rev === "number" && Number.isInteger(rev) && rev > 0 && rev <= 1e6)
         ref.revision = rev;
+      if (toYou && ref.kind === "post.created" && ref.entity_type === "post")
+        ref.to_you = true;
       refs.push(ref);
     }
   }
@@ -7307,23 +7310,28 @@ function dedupeRefs(refs) {
     if (rank > prevRank || rank === prevRank && (ref.revision ?? 0) > (prev?.revision ?? 0))
       byEntity.set(key, ref);
   }
+  for (const ref of refs) {
+    const kept = byEntity.get(refKey(ref));
+    if (ref.to_you && kept.kind === "post.created")
+      kept.to_you = true;
+  }
   return refs.filter((ref) => byEntity.get(refKey(ref)) === ref);
 }
 function refKey(ref) {
   return `${ref.entity_type}:${ref.conversation_id ?? ref.entity_id}`;
 }
-function buildWake(agent, deliveries, wakeId) {
+function buildWake(agent, deliveries, wakeId, direct) {
   return {
     wake_id: wakeId,
     agent,
-    events: dedupeRefs(toRefs(deliveries)),
+    events: dedupeRefs(toRefs(deliveries, direct)),
     resync_required: deliveries.some((d) => d.resync_required)
   };
 }
 function describe(ref) {
   if (ref.entity_type === "conversation")
     return `${ref.kind} conversation ${ref.conversation_id ?? ref.entity_id}`;
-  return `${ref.kind} ${ref.entity_type} ${ref.entity_id}`;
+  return `${ref.kind} ${ref.entity_type} ${ref.entity_id}${ref.to_you ? " (reply to you)" : ""}`;
 }
 function wakeText(wake) {
   if (wake.reminder !== undefined)
@@ -7381,6 +7389,8 @@ function sanitizeWake(raw, agent) {
     };
     if (e?.conversation_id !== undefined)
       ref.conversation_id = safeId(e.conversation_id);
+    if (e?.to_you === true && ref.kind === "post.created" && ref.entity_type === "post")
+      ref.to_you = true;
     return ref;
   });
   const wake = { wake_id: raw.wake_id, agent, events, resync_required: raw.resync_required === true };
@@ -7670,6 +7680,16 @@ var MAX_STALL_MINUTES = 1440;
 function activityDir() {
   return dirname2(socketPath());
 }
+function touchSignal(dir, kind, handle) {
+  const path = join4(dir, `${kind}-${validateHandle(handle)}`);
+  const fd = openSync(path, constants.O_WRONLY | constants.O_CREAT | (constants.O_NOFOLLOW ?? 0), 384);
+  try {
+    const now = new Date;
+    futimesSync(fd, now, now);
+  } finally {
+    closeSync(fd);
+  }
+}
 function mtime(path) {
   try {
     const st = lstatSync3(path);
@@ -7701,14 +7721,56 @@ function promptSignal(handle, dir = activityDir()) {
   return { blockedSince: blocked, reports, tracked };
 }
 var clock = (ms) => `${new Date(ms).toISOString().slice(11, 16)} UTC`;
-function statusLine(handle, signal) {
+var WATCHED_MS = 120000;
+function watchSignal(handle, dir = activityDir(), router = false) {
+  const at = (kind) => HANDLE_RE.test(handle) ? mtime(join4(dir, `${kind}-${handle}`)) : null;
+  const activity = at("activity");
+  return {
+    attempting: at("attempting"),
+    watching: at("watching"),
+    woke: at("woke"),
+    activity,
+    reports: activity !== null || at("blocked") !== null,
+    router
+  };
+}
+function span(ms) {
+  const mins = Math.max(0, Math.floor(ms / 60000));
+  return mins < 120 ? `${mins} min` : `${Math.floor(mins / 60)} h`;
+}
+function at(ms, now) {
+  const iso = new Date(ms).toISOString();
+  const day = iso.slice(0, 10) === new Date(now).toISOString().slice(0, 10) ? "" : `${iso.slice(0, 10)} `;
+  return `${day}${iso.slice(11, 16)} UTC`;
+}
+function ago(ms, now = Date.now()) {
+  return `${now - ms < 60000 ? "just now" : `${span(now - ms)} ago`} (${at(ms, now)})`;
+}
+var START_IT = "nothing is pushed to this agent. Start its monitor (in Claude Code, restart the session) or router, or check Tilori yourself with whats_new.";
+var CHECK = "check the agent's key and network (the tilori-agent log says which).";
+var FAILING = `a monitor or router is running, but its polls are failing; ${CHECK}`;
+function statusLine(handle, signal, watch, opts = {}) {
+  const now = opts.now ?? Date.now();
   if (signal.blockedSince !== null)
     return `${handle}: blocked on a prompt since ${clock(signal.blockedSince)}`;
-  if (signal.reports)
-    return `${handle}: ok`;
-  if (!signal.tracked)
-    return `${handle}: ok (prompts not tracked: no router running)`;
-  return `${handle}: ok (this client can't report prompts)`;
+  const failing = watch.attempting !== null && now - watch.attempting < WATCHED_MS;
+  if (watch.watching === null) {
+    return failing ? `${handle}: never watched on this machine: a monitor or router is polling, but no poll has succeeded yet; if this lasts more than a minute, ${CHECK}` : `${handle}: never watched on this machine: ${START_IT}`;
+  }
+  if (now - watch.watching >= WATCHED_MS) {
+    const why = failing && watch.attempting > watch.watching ? FAILING : START_IT;
+    return `${handle}: not watched for ${span(now - watch.watching)} (since ${at(watch.watching, now)}): ${why}`;
+  }
+  let wake = "no wakes yet";
+  if (watch.woke !== null) {
+    wake = `last wake ${ago(watch.woke, now)}`;
+    const stallMs = (opts.stallMinutes || DEFAULT_STALL_MINUTES) * 60000;
+    if (watch.activity !== null && watch.activity >= watch.woke)
+      wake += ", acted since";
+    else if (watch.reports)
+      wake += now - watch.woke < stallMs ? ", no action yet" : `, no action for ${span(now - watch.woke)}`;
+  }
+  return `${handle}: watched; ${wake}; ${watch.router ? "polled by the router" : "polled directly"}`;
 }
 function stallMinutes(value) {
   if (value === undefined)
@@ -18184,6 +18246,8 @@ class Router {
   #coalesceMs;
   #editPauseMs;
   #now;
+  #signalDir;
+  #signalFailed = new Set;
   constructor(options) {
     this.#log = options.logger ?? (() => {});
     this.#waitMs = options.waitMs ?? 20000;
@@ -18192,6 +18256,7 @@ class Router {
     this.#coalesceMs = options.coalesceMs ?? 3000;
     this.#editPauseMs = options.editPauseMs ?? EDIT_PAUSE_MS;
     this.#now = options.now ?? Date.now;
+    this.#signalDir = options.signalDir;
     for (const cfg of options.agents) {
       if (this.#agents.has(cfg.handle))
         throw new Error(`Agent ${cfg.handle} listed twice.`);
@@ -18332,6 +18397,7 @@ class Router {
         if (now - at > this.#renewEveryMs)
           st.dropped.delete(key);
       try {
+        this.#signal(handle, "attempting");
         subs = await client.ensureSubscriptions(st.cfg.subscriptions, {
           signal,
           renewIds: st.renewIds,
@@ -18428,7 +18494,10 @@ class Router {
           pauseTimer = setTimeout(() => st.onPolled?.(), Math.min(...resting));
       }
       try {
+        this.#signal(handle, "attempting");
         const res = await client.pollMany(idle.map((s) => s.id), this.#waitMs, call.signal);
+        if (res.errors.length < idle.length)
+          this.#signal(handle, "watching");
         failures = 0;
         let got = false;
         for (const d of res.deliveries) {
@@ -18528,7 +18597,9 @@ class Router {
       }
       try {
         const started = Date.now();
+        this.#signal(handle, "attempting");
         const { delivery: d, retryAfterMs } = await client.pollOne(sub.id, this.#waitMs, signal);
+        this.#signal(handle, "watching");
         failures = 0;
         if (d && (d.events.length > 0 || d.resync_required)) {
           if (!pending.size)
@@ -18617,10 +18688,25 @@ class Router {
       this.#log(`[${handle}] reminder skipped: injector ${injector.kind} busy`);
       return;
     }
+    this.#signal(handle, "woke");
     st.limiter.record();
     st.stats.wakes++;
     st.stats.reminders++;
     this.#log(`[${handle}] woke ${injector.kind} with a reminder`);
+  }
+  #signal(handle, kind) {
+    if (this.#signalDir === undefined)
+      return;
+    try {
+      touchSignal(this.#signalDir, kind, handle);
+      this.#signalFailed.delete(`${kind}-${handle}`);
+    } catch (cause) {
+      const key = `${kind}-${handle}`;
+      if (this.#signalFailed.has(key))
+        return;
+      this.#signalFailed.add(key);
+      this.#log(`[${handle}] could not update ${kind}- in the run directory: ${errText(cause)}`);
+    }
   }
   #noteBlocked(st) {
     const { handle, stallMinutes } = st.cfg;
@@ -18737,7 +18823,7 @@ class Router {
         send = direct;
         limiter = st.directLimiter;
       }
-      const wake = buildWake(handle, send, randomUUID2());
+      const wake = buildWake(handle, send, randomUUID2(), st.directSubs);
       const events = (ds) => ds.reduce((n, d) => n + d.events.length, 0);
       wake.events = wake.events.filter((r) => !this.#seen(st, r));
       const kept = new Set(wake.events.map(refKey));
@@ -18767,6 +18853,7 @@ class Router {
       }
       st.busy = 0;
       st.retryAt = 0;
+      this.#signal(handle, "woke");
       limiter.record();
       if (st.cfg.reminder?.onlyWhenIdle)
         st.reminderAt = Date.now() + st.cfg.reminder.everyMs;
@@ -18982,7 +19069,7 @@ function showText(agent, s, usage) {
 }
 
 // src/update-notice.ts
-import { closeSync, constants, fstatSync, openSync, readSync } from "fs";
+import { closeSync as closeSync2, constants as constants2, fstatSync, openSync as openSync2, readSync } from "fs";
 var VERSION2 = /^\d{1,6}\.\d{1,6}\.\d{1,6}$/;
 var MAX_MANIFEST_BYTES = 1e6;
 var RECHECK_MS = 60000;
@@ -19016,7 +19103,7 @@ function installedVersion(text, key) {
 function readBounded(path) {
   let fd;
   try {
-    fd = openSync(path, constants.O_RDONLY | constants.O_NONBLOCK);
+    fd = openSync2(path, constants2.O_RDONLY | constants2.O_NONBLOCK);
     const st = fstatSync(fd);
     if (!st.isFile() || st.size > MAX_MANIFEST_BYTES)
       return null;
@@ -19028,7 +19115,7 @@ function readBounded(path) {
     return null;
   } finally {
     if (fd !== undefined)
-      closeSync(fd);
+      closeSync2(fd);
   }
 }
 
@@ -19125,6 +19212,16 @@ class NotifyLinesInjector {
 }
 
 // src/watch.ts
+function signalDir(log = () => {}) {
+  const dir = activityDir();
+  try {
+    ensurePrivateDir(dir);
+    return dir;
+  } catch (cause) {
+    log(`not writing status files: ${cause instanceof Error ? cause.message : String(cause)}`);
+    return;
+  }
+}
 function directRouter(opts) {
   const settings = opts.config.agents?.[opts.agent] ?? {};
   const url = keyUrl(opts.config, opts.url);
@@ -19146,7 +19243,8 @@ function directRouter(opts) {
       }
     ],
     logger: opts.logger,
-    waitMs: opts.waitMs
+    waitMs: opts.waitMs,
+    signalDir: signalDir(opts.logger)
   });
 }
 async function runNotifyLines(opts) {
@@ -19229,13 +19327,13 @@ Usage:
       One router per person per machine for every agent with a key file.
       Injectors attach over ${"$"}XDG_RUNTIME_DIR/tilori/router.sock.
   tilori-agent status
-      One line per agent with a key: "blocked on a prompt since HH:MM UTC" while
-      its session waits on a permission or elicitation prompt, else "ok", or
-      "ok (this client can't report prompts)" when its plugin sends no such
-      signal, or "ok (prompts not tracked: no router running)". Reads only
-      two file times in the router's run directory. The router also logs a
-      blocked session once, after stall_minutes (default 10, 0 = off) with
-      wakes arriving.
+      One line per agent with a key: whether a monitor or router is watching
+      it ("watched; last wake 12 min ago (00:40 UTC), acted since; polled directly"),
+      or "not watched for \u2026" / "never watched on this machine" with what to
+      do, or "blocked on a prompt since HH:MM UTC" while its session waits on
+      a permission or elicitation prompt. Reads only file times in the run
+      directory. The router also logs a blocked session once, after
+      stall_minutes (default 10, 0 = off) with wakes arriving.
   tilori-agent ensure [--agent <handle>] [--prune [--yes]]
       Creates or renews the agent's subscriptions and prints them, plus any
       "unmanaged" ones config does not ask for (nothing polls those).
@@ -19570,6 +19668,7 @@ async function main(argv = process.argv.slice(2)) {
             }
           ],
           logger: log,
+          signalDir: signalDir(log),
           waitMs
         });
         const t = str(args, "exec-timeout-ms") ?? settings.exec_timeout_ms;
@@ -19596,7 +19695,7 @@ async function main(argv = process.argv.slice(2)) {
             stallMinutes: stallMinutes(s.stall_minutes)
           };
         });
-        const router = new Router({ agents, logger: log });
+        const router = new Router({ agents, logger: log, signalDir: activityDir() });
         for (const handle of handles) {
           const s = config.agents?.[handle];
           if (s?.injector === "exec" && s.exec) {
@@ -19635,8 +19734,20 @@ async function main(argv = process.argv.slice(2)) {
         return 0;
       }
       case "status": {
-        for (const handle of agentsWithKeys())
-          console.log(statusLine(handle, promptSignal(handle)));
+        let agents = {};
+        try {
+          agents = loadConfig().agents ?? {};
+        } catch {}
+        const router = socketIdentity() !== null;
+        for (const handle of agentsWithKeys()) {
+          let stall;
+          try {
+            stall = stallMinutes(agents?.[handle]?.stall_minutes);
+          } catch {
+            stall = undefined;
+          }
+          console.log(statusLine(handle, promptSignal(handle), watchSignal(handle, undefined, router), { stallMinutes: stall }));
+        }
         return 0;
       }
       case "key-path": {
