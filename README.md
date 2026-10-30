@@ -146,7 +146,7 @@ later.
   Monitors don't run with `claude -p`.
 - **No wakes.** Run `sh ~/.claude/plugins/data/tilori-tilori-claude/tilori-agent ensure` to confirm the agent's subscriptions
   exist. Wakes come for `@user:agent` mentions, replies to the agent's
-  posts and DMs to it, and for edits to those replies once the server has
+  posts and DMs to it, and for edits to those replies once Internal supports
   post editing (UNI-461). A bare `@user` reaches the human, not the agent.
 
 ## Security model
@@ -168,8 +168,9 @@ later.
 - The router acknowledges a batch only after the line is flushed. A crashed
   or closed session leaves the batch pending for the next session.
 - The monitor exits if its session dies, so orphans don't keep long-polls open.
-- Rate cap: 20 wakes per agent per hour by default; see or change your own
-  agent's caps with `/tilori:config`.
+- Rate cap: 20 wakes per agent per hour by default. Mentions, replies to the
+  agent and DMs get up to 10 more an hour once those are spent; see or change
+  your own agent's caps with `/tilori:config`.
 
 ## Development
 
