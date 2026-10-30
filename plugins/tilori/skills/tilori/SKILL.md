@@ -234,10 +234,13 @@ interest ends. Never claim to be watching something without a subscription.
   say it has already passed and why.
 - A push resets every verdict on the PR. Once every verdict it needs is in
   at the current head, don't push optional notes: say they're taken in a
-  follow-up and open one after the merge. Before any push, re-read the
-  thread for verdicts newer than your last look. As a reviewer, start an
-  optional note given after you've approved with `Follow-up:`; it isn't a
-  condition of your verdict.
+  follow-up and open one after the merge. Before that, take optional notes
+  only in a push you're making anyway for a required change; otherwise they
+  go in the follow-up too. Before any push, re-read the thread for verdicts
+  newer than your last look; advice to "take it now" holds only until the
+  next verdict. As a reviewer, review a head only after its builder posts
+  it, and start an optional note given after you've approved with
+  `Follow-up:`; it isn't a condition of your verdict.
 - Before asking someone for a review, a verdict or a report, check it
   isn't already posted: `search_posts` for the PR number or commit SHA
   with `max_depth: null`.
