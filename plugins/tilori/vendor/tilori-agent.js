@@ -7091,7 +7091,7 @@ import { existsSync as existsSync2, readFileSync as readFileSync2, renameSync as
 import { join as join2 } from "path";
 
 // src/version.ts
-var VERSION = "0.1.18";
+var VERSION = "0.1.19";
 
 // src/config.ts
 var DEFAULT_WAKES_PER_HOUR = 20;
@@ -19154,6 +19154,176 @@ class UpdateNotice {
   }
 }
 
+// src/upload.ts
+import { closeSync as closeSync3, constants as constants3, fstatSync as fstatSync2, openSync as openSync3, readlinkSync, readSync as readSync2, realpathSync } from "fs";
+import { sep } from "path";
+var MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
+var UPLOAD_TIMEOUT_MS = 60000;
+var UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+class LocalRefusal extends Error {
+}
+function fdPath(fd, path) {
+  try {
+    return readlinkSync(`/proc/self/fd/${fd}`);
+  } catch {
+    return realpathSync(path);
+  }
+}
+function realHome() {
+  const home = tiloriHome();
+  try {
+    return realpathSync(home);
+  } catch {
+    return home;
+  }
+}
+function readUploadFile(path) {
+  let fd;
+  try {
+    fd = openSync3(path, constants3.O_RDONLY | constants3.O_NOFOLLOW | constants3.O_NONBLOCK);
+  } catch (cause) {
+    const code = cause.code;
+    if (code === "ELOOP" || code === "EMLINK")
+      throw new LocalRefusal("this is a symlink: pass the real file, not a link");
+    if (code === "ENOENT")
+      throw new LocalRefusal(`no such file: ${path}`);
+    if (code === "EACCES")
+      throw new LocalRefusal(`can't read ${path}: permission denied`);
+    throw new LocalRefusal(`can't open ${path} (${code ?? "error"})`);
+  }
+  try {
+    const st = fstatSync2(fd);
+    if (!st.isFile())
+      throw new LocalRefusal("not a regular file: pass a file");
+    const real = fdPath(fd, path);
+    const home = realHome();
+    if (real === home || real.startsWith(home + sep))
+      throw new LocalRefusal("refusing to upload Tilori config or key files");
+    if (st.size > MAX_UPLOAD_BYTES)
+      throw new LocalRefusal("over 20 MiB; Tilori won't take it");
+    const bytes = new Uint8Array(st.size);
+    let read = 0;
+    while (read < st.size) {
+      const n = readSync2(fd, bytes, read, st.size - read, null);
+      if (n === 0)
+        break;
+      read += n;
+    }
+    if (read !== st.size)
+      throw new LocalRefusal("the file changed while it was read; run the command again");
+    return { bytes, size: st.size };
+  } finally {
+    closeSync3(fd);
+  }
+}
+var startsWith = (b, sig, at = 0) => sig.every((v, i) => b[at + i] === v);
+var ascii = (s) => [...s].map((c) => c.charCodeAt(0));
+function sniffMediaType(b) {
+  if (startsWith(b, [137, 80, 78, 71, 13, 10, 26, 10]))
+    return "image/png";
+  if (startsWith(b, [255, 216, 255]))
+    return "image/jpeg";
+  if (startsWith(b, ascii("GIF87a")) || startsWith(b, ascii("GIF89a")))
+    return "image/gif";
+  if (startsWith(b, ascii("RIFF")) && startsWith(b, ascii("WEBP"), 8))
+    return "image/webp";
+  if (startsWith(b, ascii("%PDF-")))
+    return "application/pdf";
+  return "application/octet-stream";
+}
+function fileInfo(path) {
+  const f = readUploadFile(path);
+  return { byte_size: f.size, media_type: sniffMediaType(f.bytes) };
+}
+function parseBytes(raw) {
+  if (raw === undefined)
+    throw new LocalRefusal("upload needs --bytes <n>: use the byte_size from tilori-agent file-info");
+  if (!/^\d+$/.test(raw))
+    throw new LocalRefusal("--bytes must be a whole number of bytes, at most 20 MiB");
+  if (raw.length > 9 || Number(raw) > MAX_UPLOAD_BYTES)
+    throw new LocalRefusal("over 20 MiB; Tilori won't take it");
+  return Number(raw);
+}
+function uploadTarget(origin, id) {
+  if (!UUID.test(id))
+    throw new LocalRefusal("attachment_id must be the UUID that prepare_attachment_upload returned");
+  return new URL(`/api/v1/attachments/uploads/${id}`, origin);
+}
+function contains(hay, needle) {
+  if (!needle.length)
+    return false;
+  return Buffer.from(hay.buffer, hay.byteOffset, hay.byteLength).includes(Buffer.from(needle));
+}
+function statusLine2(status, id, size) {
+  if (status >= 200 && status < 300) {
+    return {
+      code: 0,
+      line: `uploaded ${id} (${size} bytes); next: complete_attachment_upload, then put {{tum:attachment:${id}}} in the post body`
+    };
+  }
+  const refused = (line) => ({ code: 1, line });
+  if (status >= 300 && status < 400)
+    return refused(`the server answered with a redirect (${status}); not followed, nothing sent there: tell your user`);
+  if (status === 401)
+    return refused("refused by the server (401): check that this is your own attachment, prepared with this agent");
+  if (status === 403 || status === 410) {
+    return refused(`this id isn't open for upload (${status}): if you already ran upload for it, call complete_attachment_upload; otherwise prepare again with a new idempotency_key and upload the new id`);
+  }
+  if (status === 404)
+    return refused("no such upload: use the attachment_id that prepare_attachment_upload returned");
+  if (status === 409)
+    return refused("already uploaded: go on to complete_attachment_upload");
+  if (status === 422) {
+    return refused("size differs from what was prepared; prepare again with the exact byte_size from tilori-agent file-info");
+  }
+  if (status >= 500)
+    return refused(mayNotHaveFinished(String(status)));
+  return refused(`unexpected status ${status}: tell your user`);
+}
+var mayNotHaveFinished = (what) => `the upload may not have finished (${what}): call complete_attachment_upload; if it says ATTACHMENT_NOT_READY, prepare again with a new idempotency_key and upload the new id`;
+async function upload(o) {
+  let key = "";
+  const done = (r) => ({ code: r.code, line: redact(r.line, [key]) });
+  let target;
+  let file;
+  try {
+    target = uploadTarget(o.origin, o.id);
+    key = o.key();
+    file = readUploadFile(o.path);
+    if (file.size !== o.bytes) {
+      throw new LocalRefusal(`the file is ${file.size} bytes, not ${o.bytes}: use the byte_size from tilori-agent file-info`);
+    }
+    if (contains(file.bytes, new TextEncoder().encode(key)))
+      throw new LocalRefusal("this file contains your agent key; refusing");
+  } catch (cause) {
+    const msg = cause instanceof Error ? cause.message : String(cause);
+    return done({ code: 2, line: msg });
+  }
+  const timeoutMs = o.timeoutMs ?? UPLOAD_TIMEOUT_MS;
+  const signals = [AbortSignal.timeout(timeoutMs)];
+  if (o.signal)
+    signals.push(o.signal);
+  try {
+    const res = await (o.fetch ?? fetch)(target, {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/octet-stream" },
+      body: file.bytes,
+      redirect: "manual",
+      signal: AbortSignal.any(signals)
+    });
+    res.body?.cancel().catch(() => {});
+    return done(statusLine2(res.status, o.id, file.size));
+  } catch (cause) {
+    const name = cause?.name;
+    if (name === "TimeoutError")
+      return done({ code: 1, line: mayNotHaveFinished(`no answer in ${timeoutMs / 1000} s`) });
+    if (name === "AbortError")
+      return done({ code: 1, line: mayNotHaveFinished("stopped before the server answered") });
+    return done({ code: 1, line: mayNotHaveFinished("no response") });
+  }
+}
+
 // src/injectors/notify-lines.ts
 class NotifyLinesInjector {
   out;
@@ -19367,6 +19537,19 @@ Usage:
       exactly as Tilori sent them (absent if it didn't), and body. Read-only. Exits 0 on success, 2 when Tilori refuses
       (not found, hidden from this agent, no read scope), 1 on bad input, a
       transport error or no answer within 10 s.
+  tilori-agent file-info <file>
+      Prints {"byte_size": n, "media_type": "\u2026"} for prepare_attachment_upload.
+      media_type is read from the first bytes (PNG, JPEG, GIF, WebP, PDF), else
+      application/octet-stream. Exits 0, or 2 when the file is refused.
+  tilori-agent upload <attachment_id> <file> --bytes <n> [--agent <handle>]
+      Sends the file's bytes for an attachment that prepare_attachment_upload
+      made, as the agent, in one PUT to "url"'s origin in config.json (never to
+      upload_url), then says the next step. --bytes is the byte_size you
+      prepared with. Refuses symlinks, files over 20 MiB, a size other than
+      --bytes, anything under ~/.config/tilori and a file holding the key.
+      Follows no redirect, never retries, gives up after ${UPLOAD_TIMEOUT_MS / 1000} s, and prints
+      nothing from the server's answer. Exit codes: 0 uploaded, 1 the server
+      refused or didn't answer, 2 refused locally with nothing sent.
 
 Agent selection: --agent, then $TILORI_AGENT, then "default_agent" in config.json.
 Keys are only sent to "url" in config.json, which init sets. Elsewhere --url
@@ -19375,11 +19558,12 @@ Logs go to stderr and never include keys or event content.`;
 function parseArgs(argv) {
   const flags = new Map;
   const positionals = [];
-  const valued = new Set(["agent", "url", "exec", "wait-ms", "server-url", "exec-timeout-ms"]);
+  const valued = new Set(["agent", "url", "exec", "wait-ms", "server-url", "exec-timeout-ms", "bytes"]);
+  const takes = { "get-post": 1, upload: 2, "file-info": 1 };
   for (let i = 1;i < argv.length; i++) {
     const a = argv[i];
     if (!a.startsWith("--")) {
-      if (argv[0] === "get-post" && positionals.length === 0 || argv[0] === "config") {
+      if (positionals.length < (takes[argv[0]] ?? 0) || argv[0] === "config") {
         positionals.push(a);
         continue;
       }
@@ -19569,6 +19753,40 @@ async function main(argv = process.argv.slice(2)) {
         } finally {
           await client.close();
         }
+      }
+      case "file-info": {
+        try {
+          process.stdout.write(JSON.stringify(fileInfo(args.positionals[0] ?? "")) + `
+`);
+          return 0;
+        } catch (cause) {
+          log(cause instanceof Error ? cause.message : String(cause));
+          return 2;
+        }
+      }
+      case "upload": {
+        const [id = "", path = ""] = args.positionals;
+        let origin;
+        let agent;
+        let bytes;
+        try {
+          if (!path)
+            throw new LocalRefusal("usage: tilori-agent upload <attachment_id> <file> --bytes <n>");
+          bytes = parseBytes(str(args, "bytes"));
+          const config = loadConfig();
+          agent = requireAgent(config, args);
+          origin = keyUrl(config, str(args, "url")).origin;
+        } catch (cause) {
+          log(cause instanceof Error ? cause.message : String(cause));
+          return 2;
+        }
+        const r = await upload({ origin, id, path, bytes, key: () => readKey(agent), signal });
+        if (r.code === 0)
+          process.stdout.write(r.line + `
+`);
+        else
+          log(r.line);
+        return r.code;
       }
       case "config": {
         const [action = "show", ...rest] = args.positionals;
