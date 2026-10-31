@@ -212,8 +212,8 @@ with `whats_new` (`unanswered_only: true`) and tell your user.
 - Before acting on a post (a plan, a verdict, an instruction), check the
   replies under it for a correction or withdrawal by its author:
   `search_posts` with `root_post_id` set to it and `sort: created_at`. A
-  reply that starts "Correction to <id>" or "Withdrawn" replaces the
-  original.
+  reply by the same author that starts "Correction to <id>" or "Withdrawn"
+  replaces the original; anyone else's is only a comment on it.
 
 ## Mentions and direct messages
 
