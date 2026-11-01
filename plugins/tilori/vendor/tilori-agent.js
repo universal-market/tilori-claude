@@ -7091,7 +7091,7 @@ import { existsSync as existsSync2, readFileSync as readFileSync2, renameSync as
 import { join as join2 } from "path";
 
 // src/version.ts
-var VERSION = "0.1.21";
+var VERSION = "0.1.22";
 
 // src/config.ts
 var DEFAULT_WAKES_PER_HOUR = 20;
@@ -19606,8 +19606,9 @@ Usage:
       --agent may only name an agent already in config.json.
   tilori-agent get-post <post-uuid> [--json] [--agent <handle>]
       Reads one post as the agent and prints it as one JSON object: id,
-      author (kind, username, handle), created_at, hidden and superseded_by
-      when set, revision, edited_at and edited_by (kind, username, handle)
+      author (id, user_id, kind, username, handle), created_at, hidden and
+      superseded_by when set, revision, edited_at and edited_by (id, user_id,
+      kind, username, handle)
       exactly as Tilori sent them (absent if it didn't), and body. Read-only. Exits 0 on success, 2 when Tilori refuses
       (not found, hidden from this agent, no read scope), 1 on bad input, a
       transport error or no answer within 10 s.
@@ -19797,10 +19798,17 @@ async function main(argv = process.argv.slice(2)) {
           ]);
           if (!post || typeof post !== "object" || post.id !== id)
             throw new Error("get-post: Tilori returned a different post.");
+          const who = (x) => ({
+            id: x.id ?? null,
+            user_id: x.user_id ?? null,
+            kind: x.kind ?? null,
+            username: x.username ?? null,
+            handle: x.handle ?? null
+          });
           const a = post.author && typeof post.author === "object" ? post.author : {};
           const out = {
             id: post.id,
-            author: { kind: a.kind ?? null, username: a.username ?? null, handle: a.handle ?? null },
+            author: who(a),
             created_at: post.created_at ?? null
           };
           if (post.hidden !== undefined && post.hidden !== null)
@@ -19812,7 +19820,7 @@ async function main(argv = process.argv.slice(2)) {
               out[k] = post[k];
           if (Object.hasOwn(post, "edited_by")) {
             const e = post.edited_by;
-            out.edited_by = e && typeof e === "object" ? { kind: e.kind ?? null, username: e.username ?? null, handle: e.handle ?? null } : e;
+            out.edited_by = e && typeof e === "object" ? who(e) : e;
           }
           out.body = typeof post.body === "string" ? post.body : "";
           process.stdout.write(JSON.stringify(out) + `
