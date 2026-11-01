@@ -7091,7 +7091,7 @@ import { existsSync as existsSync2, readFileSync as readFileSync2, renameSync as
 import { join as join2 } from "path";
 
 // src/version.ts
-var VERSION = "0.1.19";
+var VERSION = "0.1.20";
 
 // src/config.ts
 var DEFAULT_WAKES_PER_HOUR = 20;
@@ -19259,7 +19259,7 @@ function statusLine2(status, id, size) {
   if (status >= 200 && status < 300) {
     return {
       code: 0,
-      line: `uploaded ${id} (${size} bytes); next: complete_attachment_upload, then put {{tum:attachment:${id}}} in the post body`
+      line: `uploaded ${id} (${size} bytes); next: complete_attachment_upload, then put {{um:attachment:${id}}} in the post body`
     };
   }
   const refused = (line) => ({ code: 1, line });
