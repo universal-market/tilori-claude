@@ -71,5 +71,19 @@ reason() { (cd "$p" && env -i HOME="$t" PATH=".:/usr/bin:/bin" TILORI_AGENT_BIN=
 [ "$(reason reset foo)" = "tilori: unknown key foo" ] || fail "reset key reason"
 [ "$(reason reset reminder.every_minutes)" = "tilori: reminder.every_minutes has no reset; turn the reminder off by hand" ] || fail "reminder reason"
 [ "$(reason --agent)" = "tilori: expected key=<number>" ] || fail "shape reason: $(reason --agent)"
+# trust_server (UNI-556): on or off, alone.
+for v in on off; do
+  [ "$(run trust_server=$v)" = 0 ] || fail "trust_server=$v"
+  [ "$(argv)" = "cwd=/ config set trust_server=$v" ] || fail "trust_server=$v argv: $(argv)"
+done
+for bad in "trust_server=yes" "trust_server=" "trust_server" "trust_server=https://evil.example" "trust_server=1"; do
+  [ "$(run "$bad")" = 2 ] || fail "accepted: $bad"
+  [ ! -e "$log" ] || fail "ran the CLI for: $bad"
+done
+[ "$(run trust_server=on wakes_per_hour=35)" = 2 ] || fail "trust_server with another key"
+[ "$(run wakes_per_hour=35 trust_server=on)" = 2 ] || fail "another key with trust_server"
+[ "$(run reset trust_server)" = 2 ] || fail "reset trust_server"
+[ ! -e "$log" ] || fail "partial trust_server run"
+[ "$(reason trust_server=yes)" = "tilori: trust_server takes on or off" ] || fail "trust reason: $(reason trust_server=yes)"
 [ ! -e "$t/evil" ] || fail "ran a command from the project directory"
 echo "config-command: ok"

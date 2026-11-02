@@ -5,6 +5,9 @@
 #   config.sh                      show
 #   config.sh key=<n> [key=<n> …]  set
 #   config.sh reset key [key …]    reset to the default
+#   config.sh trust_server=on|off  trust every account on this server, or stop
+#                                  (UNI-556; alone, and only when the user
+#                                  typed it: see commands/config.md)
 #
 # Every argument is checked here, against the same keys and bounds as the
 # CLI, before anything runs. Each one is passed on as its own argv entry,
@@ -27,7 +30,7 @@ here=${self%/*}
 # usage [reason]: names what was wrong first, then the usage line.
 usage() {
   [ $# -eq 0 ] || echo "tilori: $1" >&2
-  echo "usage: /tilori:config [wakes_per_hour=<1-60>] [direct_wakes_per_hour=<0-30>] [reminder.every_minutes=<15-1440>] [stall_minutes=<0-1440>]  |  /tilori:config reset <key> …" >&2
+  echo "usage: /tilori:config [wakes_per_hour=<1-60>] [direct_wakes_per_hour=<0-30>] [reminder.every_minutes=<15-1440>] [stall_minutes=<0-1440>]  |  /tilori:config reset <key> …  |  /tilori:config trust_server=on|off" >&2
   exit 2
 }
 
@@ -45,6 +48,17 @@ bounds() {
 if [ $# -eq 0 ] || { [ $# -eq 1 ] && [ "$1" = show ]; }; then
   exec "$here/run-agent.sh" config show
 fi
+
+# trust_server goes alone, with on or off only.
+for a in "$@"; do
+  case "$a" in
+    trust_server=on | trust_server=off)
+      [ $# -eq 1 ] || usage "trust_server=on|off goes alone"
+      exec "$here/run-agent.sh" config set "$a"
+      ;;
+    trust_server | trust_server=*) usage "trust_server takes on or off" ;;
+  esac
+done
 
 if [ "$1" = reset ]; then
   shift
