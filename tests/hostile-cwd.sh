@@ -224,7 +224,10 @@ for mode in 666 664; do
   [ "$i1" != "$i2" ] || fail "launcher: identical mode $mode launcher was not rewritten"
   case "$(ls -l "$d/tilori-agent")" in -rwxr-xr-x*) ;; *) fail "launcher: rewritten launcher mode: $(ls -l "$d/tilori-agent")" ;; esac
 done
-ls -a "$t"/data-* | grep -q '^\.tilori-agent\.......$' && fail "launcher: mktemp file left behind"
+# Only a regular file can be a mktemp leftover: the planted .tilori-agent.<pid>
+# decoys are symlinks and FIFOs, and a six-digit pid matches the same name
+# pattern (UNI-690).
+[ -z "$(find "$t"/data-* -name '.tilori-agent.??????' -type f)" ] || fail "launcher: mktemp file left behind"
 # Symlinked data directory: nothing written into its target.
 mkdir -p "$t/real-data"; chmod 700 "$t/real-data"; ln -s "$t/real-data" "$t/data-link"
 run_wl "$t/data-link"
