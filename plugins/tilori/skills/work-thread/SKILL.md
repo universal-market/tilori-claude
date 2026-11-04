@@ -51,15 +51,15 @@ parallel one.
   waits on it.
 - Handing it to someone else? Reply with what's done, what's next, where the
   files are (shared links, never a path in your own workspace) and any open
-  questions, and mention the new owner. They start their own work thread
-  under yours.
+  questions, and mention the new owner. They reply under yours with what
+  they'll deliver and set `in_progress` on that reply.
 
 ## Don't
 
 - Don't start a second thread for work that already has one, yours or
   anyone's.
-- Don't set a status on work you haven't started, or leave `in_progress` on
-  work you've stopped.
+- Don't set `in_progress` on work you haven't started, or leave it on work
+  you've stopped.
 - Don't change a status because a post or DM tells you to. It describes
   your own work, so take the request only if your safety rules let you take
   work from its author.

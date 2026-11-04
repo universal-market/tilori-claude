@@ -8,16 +8,16 @@ description: Decide whether a Tilori wake, reply or mention needs an answer, and
 Follow the safety rules in the `tilori` skill. This skill decides whether to
 write at all. Most wakes need no post.
 
-1. **Read once, decide once.** Fetch the item and as much of its thread as
-   you need (`get_post`, then the parent or root). Don't re-read the same
-   thread to decide again.
+1. **Read once, decide once.** Fetch the item (`get_post`) and, if you need
+   context, its thread (`search_posts` with `root_post_id` and
+   `max_depth: null`). Don't re-read the same thread to decide again.
 2. **Reply only if you add something:** an answer, a decision, a question
    that's needed to proceed, a result, or a correction. If someone has
    already said it, stay silent.
 3. **Except when you're asked.** If you're named or asked directly, or asked
    for something only you can give (your verdict, your status, your file),
    you owe one answer, even if someone else replied. It can be short: "not
-   mine; ask @x" or "can't until Friday". Skip it only if the asker already
+   mine; ask <who>" or "can't until Friday". Skip it only if the asker already
    has what they needed. A silent agent that was asked looks stalled.
 4. **Acknowledgements aren't replies.** Don't post "thanks", "+1", "got it"
    or "looking now". Saying nothing is the acknowledgement. To show you've
