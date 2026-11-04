@@ -2,7 +2,14 @@
 # Prepares a plugin release that bundles a tilori-agent tag, locally, and
 # stops at the first thing that doesn't match:
 #
-#   sh tools/release.sh v0.1.11 0.1.15
+#   sh tools/release.sh v0.1.11 0.1.15            # steps 1-4, then stop
+#   git commit plugins/tilori/vendor               # the "Bundle" commit
+#   sh tools/release.sh --finish v0.1.11 0.1.15   # steps 1, 2, 4, then 5-7
+#
+# It runs in two parts because bundle-agent.sh --verify (step 5) only
+# vouches for a committed bundle: the result is for HEAD, so a dirty
+# vendor/ is refused (UNI-691). --finish re-checks the tag, the run and the
+# asset against the committed SOURCE before verifying it.
 #
 #   1. the tag's commit is on tilori-agent main, and its src/version.ts
 #      says the tag's version (v0.1.12 was tagged without a bump);
@@ -32,7 +39,7 @@ WORKFLOW_SHA256=${WORKFLOW_SHA256:-836aa43ce567e43dee2d16b1b8acd77c8ede640f36fbe
 workflow=.github/workflows/release-hash.yml
 
 die() { echo "release: $*" >&2; exit 1; }
-usage() { echo "usage: sh tools/release.sh <agent-tag vX.Y.Z> <plugin-version X.Y.Z>" >&2; exit 2; }
+usage() { echo "usage: sh tools/release.sh [--finish] <agent-tag vX.Y.Z> <plugin-version X.Y.Z>" >&2; exit 2; }
 semver() { printf '%s' "$1" | grep -Eq '^[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}$'; }
 # 0 when $1 > $2, as numbers (0.1.10 > 0.1.9).
 newer() {
@@ -44,6 +51,8 @@ newer() {
   [ "$3" -gt "$6" ]
 }
 
+finish=
+[ "${1:-}" = --finish ] && { finish=1; shift; }
 [ $# -eq 2 ] || usage
 tag=$1; version=$2
 case "$tag" in v*) semver "${tag#v}" || usage ;; *) usage ;; esac
@@ -51,7 +60,10 @@ semver "$version" || usage
 current=$(sed -n 's/^  "version": "\(.*\)",$/\1/p' "$manifest")
 semver "$current" || die "can't read the current version from $manifest"
 newer "$version" "$current" || die "plugin version $version is not higher than $current"
-[ -z "$(git status --porcelain)" ] || die "the working tree has changes; start from a clean branch"
+if [ -n "$(git status --porcelain)" ]; then
+  [ -n "$finish" ] && die "the working tree has changes; commit plugins/tilori/vendor (and nothing else) before --finish"
+  die "the working tree has changes; start from a clean branch"
+fi
 [ "$(git branch --show-current)" != main ] || die "on main; make a branch first"
 
 t=$(mktemp -d); trap 'rm -rf "$t"' EXIT
@@ -78,8 +90,12 @@ uploader=$($GH api "repos/$repo/releases/tags/$tag" --jq '.assets[] | select(.na
 $GH release download "$tag" -R "$repo" -p tilori-agent.js.sha256 -D "$t" >/dev/null
 echo "uploaded by $uploader"
 
-echo "== 3. bundle"
-$BUNDLE "$tag"
+if [ -z "$finish" ]; then
+  echo "== 3. bundle"
+  $BUNDLE "$tag"
+else
+  echo "== 3. bundle: committed (--finish)"
+fi
 
 echo "== 4. SOURCE = asset"
 grep -v '^#' "$vendor/SOURCE" > "$t/source"
@@ -87,6 +103,16 @@ cmp -s "$t/source" "$t/tilori-agent.js.sha256" || { diff "$t/source" "$t/tilori-
 grep -q "^commit=$commit$" "$t/source" || die "SOURCE's commit is not $commit"
 sha=$(sed -n 's/^sha256=//p' "$t/source")
 echo "sha256 $sha"
+
+if [ -z "$finish" ]; then
+  cat <<NEXT
+
+release: bundle written and matches the release asset. Commit it, then finish:
+  git add plugins/tilori/vendor && git commit -m "Bundle tilori-agent $tag"
+  sh tools/release.sh --finish $tag $version
+NEXT
+  exit 0
+fi
 
 echo "== 5. verify"
 $BUNDLE --verify

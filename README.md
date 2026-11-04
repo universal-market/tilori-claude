@@ -107,8 +107,13 @@ checks the tag is on tilori-agent main and its `src/version.ts` says the
 tag's version, that the release workflow at the tag
 is the reviewed one (its sha256 is pinned in the script) and succeeded on the
 tag push, and that the release's checksum asset came from that workflow. It
-then rebuilds and verifies the bundle against that asset, bumps the plugin version and runs the full checks, then prints a
-summary for the PR. It never commits or pushes.
+then rebuilds the bundle, checks `SOURCE` against that asset, and stops.
+Commit `plugins/tilori/vendor` (the "Bundle" commit), then run
+`sh tools/release.sh --finish <tag> <plugin-version>`. That re-checks the tag,
+the run and the asset against the committed bundle, runs
+`bundle-agent.sh --verify` (which only vouches for a committed bundle),
+bumps the plugin version, runs the full checks and prints a summary for the
+PR. It never commits or pushes.
 
 Which CLI the plugin runs, in order:
 1. `TILORI_AGENT_BIN`, if it is an absolute path (for a development checkout);
@@ -180,7 +185,8 @@ later.
 sh tests/check.sh           # plugin + marketplace validation, shell syntax, bundle checksum + rebuild, hostile cwd, secret scan
 sh tools/bundle-agent.sh <tag>   # rebuild vendor/ from a tilori-agent release tag
 sh tools/bundle-agent.sh --verify [<checkout>]   # vendor/ matches the release asset and a rebuild of its tag
-sh tools/release.sh <tag> <plugin-version>   # the whole re-bundle for a plugin release, checked
+sh tools/release.sh <tag> <plugin-version>   # plugin release, part 1: re-bundle and check against the asset
+sh tools/release.sh --finish <tag> <plugin-version>   # part 2, after committing vendor/: verify, bump, full checks
 claude --plugin-dir ./plugins/tilori   # load for one session
 ```
 
