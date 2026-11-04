@@ -26,7 +26,9 @@ mkdir -p "$h/.bun/bin" "$h/pkg/src" "$p" "$m"
 ln -s "$realbun" "$h/.bun/bin/bun"
 cat > "$h/pkg/src/cli.ts" <<'TS'
 #!/usr/bin/env bun
-console.log(`cwd=${process.cwd()} evil=${process.env.TILORI_EVIL ?? 'unset'} args=${process.argv.slice(2).join(',')}`);
+// As `headers`, it names an Authorization header, so headers.sh passes the
+// line through instead of its no-key placeholder (UNI-693).
+console.log(`${process.argv[2] === 'headers' ? '"Authorization" ' : ''}cwd=${process.cwd()} evil=${process.env.TILORI_EVIL ?? 'unset'} args=${process.argv.slice(2).join(',')}`);
 TS
 chmod +x "$h/pkg/src/cli.ts"
 ln -s ../../pkg/src/cli.ts "$h/.bun/bin/tilori-agent"
@@ -52,7 +54,7 @@ rm -f "$m/preload"
 sys=/usr/bin:/bin
 for path in ".:$sys" ":$sys" "$sys:" "$sys::/nonexistent" "$sys"; do
   out=$(cd "$p" && env -i HOME="$h" PATH="$path" sh "$run" headers --x 2>&1) || fail "PATH=$path: exit $? ($out)"
-  [ "$out" = "cwd=/ evil=unset args=headers,--x" ] || fail "PATH=$path: unexpected output: $out"
+  [ "$out" = '"Authorization" cwd=/ evil=unset args=headers,--x' ] || fail "PATH=$path: unexpected output: $out"
   no_markers "PATH=$path"
 done
 
@@ -64,7 +66,7 @@ for path in ".:$sys" ":$sys"; do
   for s in headers.sh session-start.sh; do
     out=$(cd "$p" && env -i HOME="$h" PATH="$path" "$scripts/$s" 2>&1) || fail "$s, PATH=$path: exit $? ($out)"
     case "$s" in
-      headers.sh) want="cwd=/ evil=unset args=headers" ;;
+      headers.sh) want='"Authorization" cwd=/ evil=unset args=headers' ;;
       session-start.sh) want="cwd=/ evil=unset args=policy,--hook" ;;
     esac
     [ "$out" = "$want" ] || fail "$s, PATH=$path: unexpected output: $out"
@@ -117,11 +119,11 @@ no_markers "missing CLI"
 ln -sf ../../pkg/src/cli.ts "$h/.bun/bin/tilori-agent"
 mkdir -p "$plugin/vendor"
 cat > "$plugin/vendor/tilori-agent.js" <<'JS'
-console.log(`bundle cwd=${process.cwd()} evil=${process.env.TILORI_EVIL ?? 'unset'} args=${process.argv.slice(2).join(',')}`);
+console.log(`${process.argv[2] === 'headers' ? '"Authorization" ' : ''}bundle cwd=${process.cwd()} evil=${process.env.TILORI_EVIL ?? 'unset'} args=${process.argv.slice(2).join(',')}`);
 JS
 for path in ".:$sys" ":$sys" "$sys"; do
   out=$(cd "$p" && env -i HOME="$h" PATH="$path" "$scripts/headers.sh" 2>&1) || fail "bundle headers.sh, PATH=$path: exit $? ($out)"
-  [ "$out" = "bundle cwd=/ evil=unset args=headers" ] || fail "bundle headers.sh, PATH=$path: $out"
+  [ "$out" = '"Authorization" bundle cwd=/ evil=unset args=headers' ] || fail "bundle headers.sh, PATH=$path: $out"
   out=$(cd "$p" && env -i HOME="$h" PATH="$path" "$scripts/monitor.sh" 2>&1) || fail "bundle monitor.sh, PATH=$path: exit $? ($out)"
   [ "$out" = "bundle cwd=/ evil=unset args=watch,--notify-lines" ] || fail "bundle monitor.sh, PATH=$path: $out"
   out=$(cd "$p" && env -i HOME="$h" PATH="$path" "$rel/run-agent.sh" f 2>&1) || fail "bundle relative \$0, PATH=$path: exit $? ($out)"

@@ -27,6 +27,10 @@ out=$(run) || fail "failing helper exited non-zero"
 stub 'exit 0'
 [ "$(run)" = "$SENTINEL" ] || fail "empty helper: $(run)"
 
+# `{}` (no Authorization) still poisons the cache, so it gets the placeholder too.
+stub 'echo "{}"'
+[ "$(run)" = "$SENTINEL" ] || fail "helper printing {}: $(run)"
+
 stub 'echo "{\"Authorization\":\"Bearer mcp_sk_stub\"}"; echo "secret detail" >&2'
 [ "$(run)" = '{"Authorization":"Bearer mcp_sk_stub"}' ] || fail "key not passed through unchanged: $(run)"
 [ ! -s "$t/err" ] || fail "key path wrote to stderr: $(cat "$t/err")"

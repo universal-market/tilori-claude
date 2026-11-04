@@ -16,7 +16,9 @@
 # server answers 401 and records nothing.
 # ${0%/*}, not dirname: no external command runs from the project directory.
 case "$0" in */*) here=${0%/*} ;; *) here=. ;; esac
-if out=$("$here/run-agent.sh" headers 2>/dev/null) && [ -n "$out" ]; then
+# Only output that carries an Authorization header passes: `{}` or other
+# headers alone would still leave Claude Code to fall back to OAuth.
+if out=$("$here/run-agent.sh" headers 2>/dev/null) && case "$out" in *'"Authorization"'*) true ;; *) false ;; esac; then
   printf '%s\n' "$out"
 else
   printf '%s\n' '{"Authorization":"Bearer tilori-no-agent-key"}'
