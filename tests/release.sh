@@ -38,7 +38,11 @@ esac
 SH
   cat > "$t/bundle" <<SH
 #!/bin/sh
-[ "\$1" = --verify ] && { echo verified; exit \${STUB_VERIFY:-0}; }
+if [ "\$1" = --verify ]; then
+  # Like the real --verify: a result is for HEAD, so a dirty vendor/ is refused.
+  [ -z "\$(git status --porcelain -- plugins/tilori/vendor)" ] || { echo "vendor has uncommitted changes"; exit 1; }
+  echo verified; exit \${STUB_VERIFY:-0}
+fi
 printf '# Generated\n%s\n' "\${STUB_SOURCE:-\$ASSET}" > plugins/tilori/vendor/SOURCE
 SH
   chmod +x "$t/gh" "$t/bundle"
@@ -46,10 +50,23 @@ SH
 # sha256 of the stub's default workflow text, "reviewed".
 PIN=$(printf reviewed | { sha256sum 2>/dev/null || shasum -a 256; }); PIN=${PIN%% *}
 run() { (cd "$t/r" && env ASSET="$ASSET" GH="$t/gh" BUNDLE="$t/bundle" CHECK="${CHECK:-true}" WORKFLOW_SHA256="$PIN" "$@" sh tools/release.sh v0.1.11 0.1.15 2>&1); }
+finish() { (cd "$t/r" && env ASSET="$ASSET" GH="$t/gh" BUNDLE="$t/bundle" CHECK="${CHECK:-true}" WORKFLOW_SHA256="$PIN" "$@" sh tools/release.sh --finish v0.1.11 0.1.15 2>&1); }
+commit_vendor() { (cd "$t/r" && git -c user.name=t -c user.email=t@t add plugins/tilori/vendor && git -c user.name=t -c user.email=t@t commit -qm bundle); }
 version() { sed -n 's/^  "version": "\(.*\)",$/\1/p' "$t/r/plugins/tilori/.claude-plugin/plugin.json"; }
 
-setup; out=$(run) || fail "good release: $out"
-case "$out" in *"release: ready"*"sha256 \`aaaa\`"*"0.1.14 -> 0.1.15"*) ;; *) fail "good release summary: $out" ;; esac
+# Part 1 writes and checks the bundle, then stops: nothing verified, no bump.
+setup; out=$(run) || fail "good release, part 1: $out"
+case "$out" in *"Commit it, then finish"*"tools/release.sh --finish v0.1.11 0.1.15"*) ;; *) fail "part 1 next steps: $out" ;; esac
+case "$out" in *"release: ready"*|*verified*) fail "part 1 went past step 4: $out" ;; esac
+[ "$(version)" = 0.1.14 ] || fail "part 1 bumped the version"
+# --finish before the bundle is committed is refused (UNI-691).
+if out=$(finish); then fail "--finish with an uncommitted bundle accepted: $out"; fi
+case "$out" in *"commit plugins/tilori/vendor"*) ;; *) fail "uncommitted --finish message: $out" ;; esac
+[ "$(version)" = 0.1.14 ] || fail "plugin.json changed on a refused --finish"
+# Part 2, on the committed bundle.
+commit_vendor
+out=$(finish) || fail "good release, --finish: $out"
+case "$out" in *verified*"release: ready"*"sha256 \`aaaa\`"*"0.1.14 -> 0.1.15"*) ;; *) fail "good release summary: $out" ;; esac
 [ "$(version)" = 0.1.15 ] || fail "version not bumped"
 grep -q '"x": 1' "$t/r/plugins/tilori/.claude-plugin/plugin.json" || fail "plugin.json lost other fields"
 
@@ -72,8 +89,24 @@ refuse "run lookup garbage" "no successful" STUB_RUNS=x
 refuse "asset by a person" "not github-actions[bot]" STUB_UPLOADER=someone
 refuse "no asset" "uploaded by 'nobody'" STUB_UPLOADER=
 refuse "SOURCE differs" "does not match the release asset" STUB_SOURCE="tag=v0.1.11"
-refuse "verify fails" "verified" STUB_VERIFY=1
-refuse "checks fail" "" CHECK=false
+
+# --finish re-checks the committed bundle; verify and checks run only there.
+refuse_finish() { # name, expected message, env...
+  name=$1; want=$2; shift 2
+  setup; run >/dev/null || fail "$name: part 1 failed"; commit_vendor
+  if out=$(finish "$@"); then fail "$name: accepted ($out)"; fi
+  case "$out" in *"$want"*) ;; *) fail "$name: wrong message: $out" ;; esac
+  case "$out" in *"release: ready"*) fail "$name: reported ready" ;; esac
+}
+refuse_finish "finish: verify fails" "verified" STUB_VERIFY=1
+refuse_finish "finish: checks fail" "" CHECK=false
+refuse_finish "finish: asset by a person" "not github-actions[bot]" STUB_UPLOADER=someone
+refuse_finish "finish: tag moved" "is not on universal-market/tilori-agent main" STUB_STATUS=ahead
+# A committed SOURCE that doesn't match the asset (edited after part 1).
+setup; run >/dev/null || fail "edited SOURCE: part 1 failed"
+printf '# Generated\ntag=v0.1.11\n' > "$t/r/plugins/tilori/vendor/SOURCE"; commit_vendor
+if out=$(finish); then fail "edited SOURCE accepted: $out"; fi
+case "$out" in *"does not match the release asset"*) ;; *) fail "edited SOURCE message: $out" ;; esac
 
 # Argument and state checks, before anything runs.
 setup
