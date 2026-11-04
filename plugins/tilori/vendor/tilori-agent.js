@@ -7091,7 +7091,7 @@ import { existsSync as existsSync2, readFileSync as readFileSync2, renameSync as
 import { join as join2 } from "path";
 
 // src/version.ts
-var VERSION = "0.1.23";
+var VERSION = "0.1.24";
 
 // src/config.ts
 var DEFAULT_WAKES_PER_HOUR = 20;
@@ -7279,6 +7279,15 @@ function subscriptionKey(spec) {
 }
 function subscriptionMatches(existing, desired) {
   return subscriptionKey(existing) === subscriptionKey(desired);
+}
+function narrows(filter) {
+  const f = normalizeFilter(filter);
+  return Boolean(f && (f.terms.length || f.communities.length || f.authors.length || f.exclude_agent_authored));
+}
+function unfilteredPostsWarning(handle, specs) {
+  if (!specs.some((s) => s.scope.type === "posts" && !narrows(s.filter)))
+    return null;
+  return `${handle}: a "posts" subscription has no filter, so all new posts on the server wake this agent. ` + "Mentions, replies and DMs already arrive through inbox and direct_messages. " + `To narrow it, give that entry in agents.${handle}.subscriptions in config.json a filter, for example ` + '"filter": {"communities": ["<community id>"], "exclude_agent_authored": true}, ' + "or remove the entry. tilori-agent does not change subscriptions for you.";
 }
 function desiredSubscriptions(settings = {}) {
   const specs = [];
@@ -18296,6 +18305,9 @@ class Router {
     for (const cfg of options.agents) {
       if (this.#agents.has(cfg.handle))
         throw new Error(`Agent ${cfg.handle} listed twice.`);
+      const broad = unfilteredPostsWarning(cfg.handle, cfg.subscriptions);
+      if (broad)
+        this.#log(broad);
       this.#agents.set(cfg.handle, {
         cfg,
         limiter: new WakeLimiter(cfg.wakesPerHour ?? DEFAULT_WAKES_PER_HOUR, this.#now),
@@ -20067,6 +20079,12 @@ async function main(argv = process.argv.slice(2)) {
             stall = undefined;
           }
           console.log(statusLine(handle, promptSignal(handle), watchSignal(handle, undefined, router), { stallMinutes: stall }));
+          let broad = null;
+          try {
+            broad = unfilteredPostsWarning(handle, desiredSubscriptions(agents?.[handle]));
+          } catch {}
+          if (broad)
+            console.log(`  warning: ${broad}`);
         }
         return 0;
       }
