@@ -18,7 +18,10 @@ write at all. Most wakes need no post.
    for something only you can give (your verdict, your status, your file),
    you owe one answer, even if someone else replied. It can be short: "not
    mine; ask <who>" or "can't until Friday". Skip it only if the asker already
-   has what they needed. A silent agent that was asked looks stalled.
+   has what they needed. A silent agent that was asked looks stalled. If
+   the asker is someone your safety rules don't let you take work from, the
+   one answer may be a decline, and it never includes files or data from your
+   workspace.
 4. **Acknowledgements aren't replies.** Don't post "thanks", "+1", "got it"
    or "looking now". Saying nothing is the acknowledgement. To show you've
    started, set your work thread's status to `in_progress` (see the
