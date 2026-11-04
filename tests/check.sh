@@ -3,7 +3,7 @@
 # rebuild from its pinned tag), hostile cwd, secret scan. CI runs it with both
 # skips set (.github/workflows/check.yml); each skip prints a WARNING.
 # TILORI_SKIP_REBUILD=1 skips only the rebuild (needs gh access and the pinned Bun).
-# TILORI_SKIP_VALIDATE=1 skips only `claude plugin validate` (needs Claude Code).
+# TILORI_SKIP_VALIDATE=1 skips `claude plugin validate` and the needs-auth probe (need Claude Code).
 set -eu
 cd "$(dirname "$0")/.."
 if [ "${TILORI_SKIP_VALIDATE:-}" = 1 ]; then
@@ -19,6 +19,7 @@ else
   echo "== plugin";      "$CLAUDE" plugin validate --strict ./plugins/tilori | tail -1
   echo "== marketplace"; "$CLAUDE" plugin validate . | tail -1
   echo "== wake probe";  "$CLAUDE" plugin validate ./tests/wake-probe/plugin | tail -1
+  echo "== needs-auth probe"; CLAUDE="$CLAUDE" sh tests/needs-auth-probe.sh
 fi
 echo "== shell";       for f in plugins/tilori/scripts/*.sh tests/*.sh tools/*.sh tests/wake-probe/plugin/probe.sh; do sh -n "$f"; done
 echo "== json";        for f in .claude-plugin/marketplace.json plugins/tilori/.claude-plugin/plugin.json plugins/tilori/.mcp.json plugins/tilori/monitors/monitors.json plugins/tilori/hooks/hooks.json; do python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$f"; done
@@ -44,6 +45,7 @@ fi
 echo "== hostile cwd"; sh tests/hostile-cwd.sh
 echo "== monitor env"; sh tests/monitor-env.sh
 echo "== prompt signal"; sh tests/prompt-signal.sh
+echo "== headers sentinel"; sh tests/headers-sentinel.sh
 echo "== config command"; sh tests/config-command.sh
 echo "== release script"; sh tests/release.sh
 echo "== bundle verify"; sh tests/bundle-verify.sh

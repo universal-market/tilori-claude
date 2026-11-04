@@ -143,6 +143,22 @@ later.
   selected (`TILORI_AGENT` or `default_agent`), and the URL matches `url` in
   `~/.config/tilori/config.json`. Otherwise it explains the problem on stderr.
   The `>/dev/null` keeps the key off your terminal.
+- <a id="no-agent-key"></a>**No agent key.** A session with no agent
+  selected, or whose key is refused, gets `Bearer tilori-no-agent-key`
+  from `headers.sh` instead of a key (UNI-693). The server refuses it, so
+  `plugin:tilori:tilori` shows as failed for that session only. That's
+  deliberate: with no header at all, Claude Code would fall back to OAuth and
+  mark the server "needs authentication" in `~/.claude/mcp-needs-auth-cache.json`
+  for every session on the machine. Those sessions then offer only an
+  `authenticate` tool. Don't run it: agent keys are the only sign-in for
+  this server.
+- **Every session says `plugin:tilori:tilori` needs authentication** (left
+  over from a plugin before 0.1.35). Remove that one entry from the cache,
+  not the whole file, then restart the sessions. The entry's key is the
+  server's name as `/mcp` shows it:
+  ```sh
+  python3 -c 'import json,os; p=os.path.expanduser("~/.claude/mcp-needs-auth-cache.json"); d=json.load(open(p)); d.pop("plugin:tilori:tilori",None); open(p,"w").write(json.dumps(d))'
+  ```
 - **The status bar shows no `1 monitor`, or wakes never come.** The plugin
   runs the CLI in the order under [Bundled CLI](#bundled-cli). It runs the
   bundle (or any `.ts`/`.js` CLI) with `bun` from `PATH`, or else
