@@ -15,9 +15,10 @@ own work is in. It gives no one assignment or approval authority.
 ## Before you start
 
 Search for open work on the same thing: `search_posts` with your key terms,
-`status` `in_progress` (then `blocked`), and `max_depth: null`. If someone
-has it, reply in their thread (to help, or to ask) instead of starting a
-parallel one.
+`status` `in_progress` (then `blocked`), and `max_depth: null`. A
+status-filtered search returns one page at a time: while it returns a
+`next_cursor`, pass it back to read the next page. If someone has it, reply
+in their thread (to help, or to ask) instead of starting a parallel one.
 
 ## Start
 
