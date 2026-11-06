@@ -6980,7 +6980,7 @@ import { existsSync as existsSync4, readdirSync } from "fs";
 import { join as join5 } from "path";
 
 // src/activity.ts
-import { closeSync, constants, futimesSync, lstatSync as lstatSync3, openSync } from "fs";
+import { closeSync, constants, futimesSync, lstatSync as lstatSync3, openSync, readFileSync as readFileSync3, writeSync } from "fs";
 import { dirname as dirname2, join as join4 } from "path";
 
 // src/ipc.ts
@@ -7091,13 +7091,21 @@ import { existsSync as existsSync2, readFileSync as readFileSync2, renameSync as
 import { join as join2 } from "path";
 
 // src/version.ts
-var VERSION = "0.1.24";
+var VERSION = "0.1.25";
 
 // src/config.ts
 var DEFAULT_WAKES_PER_HOUR = 20;
 var DEFAULT_DIRECT_WAKES_PER_HOUR = 10;
 var MIN_REMINDER_MINUTES = 15;
 var MAX_REMINDER_PROMPT = 500;
+function pushEnabled(settings = {}) {
+  const p = settings.push;
+  if (p === undefined || p === "off")
+    return false;
+  if (p === "on")
+    return true;
+  throw new Error('push must be "on" or "off".');
+}
 function validReminderPrompt(prompt) {
   return typeof prompt === "string" && prompt.trim().length > 0 && prompt.length <= MAX_REMINDER_PROMPT && !/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(prompt);
 }
@@ -7377,6 +7385,8 @@ function describe(ref) {
   return `${ref.kind} ${ref.entity_type} ${ref.entity_id}${ref.to_you ? " (reply to you)" : ""}`;
 }
 function wakeText(wake) {
+  if (wake.push !== undefined)
+    return pushText(wake.agent, wake.push) + updateText(wake);
   if (wake.reminder !== undefined)
     return reminderText(wake.agent, wake.reminder) + resumeText(wake) + postsLeftText(wake) + updateText(wake) + toolsText(wake);
   const n = wake.events.length;
@@ -7414,6 +7424,11 @@ function toolsText(wake) {
   if (wake.tools_changed !== true)
     return "";
   return ` Tilori's tools changed since this session started: reload their definitions before using new inputs,` + ` or restart the session if they still look the same.`;
+}
+function pushText(agent, push) {
+  if (push.state === "down")
+    return `Tilori push for agent ${agent} is down since ${new Date(push.since).toISOString().slice(11, 16)} UTC; wakes may be late.` + ` Call whats_new or poll_events if you're waiting on something.`;
+  return `Tilori push for agent ${agent} is back; caught up ${push.caught} event${push.caught === 1 ? "" : "s"}.`;
 }
 function reminderText(agent, prompt) {
   return `Tilori reminder for agent ${agent} (your own periodic reminder from ~/.config/tilori/config.json, ` + `not a Tilori event; there is nothing to fetch): ${prompt.trim()}`;
@@ -7454,6 +7469,18 @@ function sanitizeWake(raw, agent) {
   }
   if (typeof raw.tools_hash === "string" && TOOLS_HASH.test(raw.tools_hash))
     wake.tools_hash = raw.tools_hash;
+  if (raw.push !== undefined) {
+    const p = raw.push;
+    if (events.length || !p || typeof p !== "object")
+      return null;
+    if (p.state === "down" && Number.isInteger(p.since) && Math.abs(p.since - Date.now()) < 7 * 86400000)
+      wake.push = { state: "down", since: p.since };
+    else if (p.state === "back" && (p.caught === 0 || count(p.caught)))
+      wake.push = { state: "back", caught: p.caught };
+    else
+      return null;
+    return wake;
+  }
   if (raw.reminder !== undefined) {
     if (!validReminderPrompt(raw.reminder) || events.length)
       return null;
@@ -7733,6 +7760,57 @@ function touchSignal(dir, kind, handle) {
     closeSync(fd);
   }
 }
+function writePushSignal(dir, handle, s) {
+  const path = join4(dir, `push-${validateHandle(handle)}`);
+  const fd = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | (constants.O_NOFOLLOW ?? 0), 384);
+  try {
+    writeSync(fd, JSON.stringify({ state: s.state, since: s.since, ...s.next !== undefined ? { next: s.next } : {} }));
+  } finally {
+    closeSync(fd);
+  }
+}
+var PUSH_STATES = new Set(["connecting", "live", "reconnecting", "down", "refused"]);
+function readPushSignal(handle, dir = activityDir()) {
+  if (!HANDLE_RE.test(handle))
+    return null;
+  const path = join4(dir, `push-${handle}`);
+  try {
+    const st = lstatSync3(path);
+    if (!st.isFile() || st.size > 512)
+      return null;
+    if (typeof process.getuid === "function" && st.uid !== process.getuid())
+      return null;
+    const raw = JSON.parse(readFileSync3(path, "utf8"));
+    if (!PUSH_STATES.has(raw?.state) || !Number.isInteger(raw.since))
+      return null;
+    return {
+      state: raw.state,
+      since: raw.since,
+      ...Number.isInteger(raw.next) ? { next: raw.next } : {},
+      at: st.mtimeMs
+    };
+  } catch {
+    return null;
+  }
+}
+var PUSH_FRESH_MS = 7 * 60000;
+function pushChip(s, now = Date.now()) {
+  if (!s || now - s.at >= PUSH_FRESH_MS)
+    return null;
+  const next = s.next !== undefined ? ` \xB7 next try ${s.next <= now ? "now" : span(Math.max(60000, s.next - now))}` : "";
+  switch (s.state) {
+    case "live":
+      return "push live";
+    case "connecting":
+      return "push connecting";
+    case "reconnecting":
+      return `push reconnecting${next}`;
+    case "down":
+      return `push down since ${clock(s.since)}${next}`;
+    case "refused":
+      return "push refused \xB7 access";
+  }
+}
 function mtime(path) {
   try {
     const st = lstatSync3(path);
@@ -7796,6 +7874,9 @@ function statusLine(handle, signal, watch, opts = {}) {
   const now = opts.now ?? Date.now();
   if (signal.blockedSince !== null)
     return `${handle}: blocked on a prompt since ${clock(signal.blockedSince)}`;
+  const chip = pushChip(opts.push ?? null, now);
+  if (chip && opts.push.state !== "live")
+    return opts.push.state === "refused" ? `${handle}: ${chip}: Tilori refused the agent's key for push; ${CHECK}` : `${handle}: ${chip}; wakes may be late until it's back. Nothing polls meanwhile: call whats_new or poll_events yourself if you're waiting on something.`;
   const failing = watch.attempting !== null && now - watch.attempting < WATCHED_MS;
   if (watch.watching === null) {
     return failing ? `${handle}: never watched on this machine: a monitor or router is polling, but no poll has succeeded yet; if this lasts more than a minute, ${CHECK}` : `${handle}: never watched on this machine: ${START_IT}`;
@@ -7813,7 +7894,8 @@ function statusLine(handle, signal, watch, opts = {}) {
     else if (watch.reports)
       wake += now - watch.woke < stallMs ? ", no action yet" : `, no action for ${span(now - watch.woke)}`;
   }
-  return `${handle}: watched; ${wake}; ${watch.router ? "polled by the router" : "polled directly"}`;
+  const how = chip ? chip : watch.router ? "polled by the router" : "polled directly";
+  return `${handle}: watched; ${wake}; ${how}`;
 }
 function stallMinutes(value) {
   if (value === undefined)
@@ -18186,6 +18268,305 @@ class ExecInjector {
 // src/router.ts
 import { randomUUID as randomUUID2 } from "crypto";
 
+// src/push.ts
+var TICKET_HEADER = "tilori-stream-ticket";
+var TICKET = /^tst_[A-Za-z0-9_-]{43}$/;
+var RETRY_MIN_MS = 5000;
+var RETRY_MAX_MS = 5 * 60000;
+var DOWN_AFTER_MS = 60000;
+var PLANNED_MS = 20 * 60000;
+var REFUSED_RETRY_MS = 5 * 60000;
+var PLANNED_MIN_MS = 1000;
+var PLANNED_JITTER_MS = 2000;
+var MIN_LIVED_MS = 30000;
+var MAX_EVENT_BYTES = 256 * 1024;
+
+class Refused extends Error {
+}
+
+class Failed extends Error {
+  retryMs;
+  constructor(message, retryMs) {
+    super(message);
+    this.retryMs = retryMs;
+  }
+}
+var retryAfter2 = (res) => {
+  const s = Number(res.headers.get("retry-after"));
+  return Number.isFinite(s) && s > 0 ? Math.min(s * 1000, RETRY_MAX_MS) : undefined;
+};
+var defaultSleep = (ms, signal) => new Promise((resolve) => {
+  if (signal.aborted)
+    return resolve();
+  const t = setTimeout(done, ms);
+  function done() {
+    clearTimeout(t);
+    signal.removeEventListener("abort", done);
+    resolve();
+  }
+  signal.addEventListener("abort", done, { once: true });
+});
+function eventsUrl(raw, endpoint) {
+  if (typeof raw !== "string" || raw.length > 2048)
+    return null;
+  let url;
+  try {
+    url = new URL(raw);
+  } catch {
+    return null;
+  }
+  if (url.username || url.password || url.hash)
+    return null;
+  const loopback = (u) => ["localhost", "127.0.0.1", "[::1]"].includes(u.hostname);
+  if (url.protocol === "https:")
+    return url;
+  if (url.protocol === "http:" && endpoint.protocol === "http:" && loopback(endpoint) && loopback(url))
+    return url;
+  return null;
+}
+
+class PushStream {
+  hooks;
+  #o;
+  #status;
+  #lostAt = 0;
+  #saidDown = false;
+  #openedAt = 0;
+  #steadied = true;
+  #failures = 0;
+  constructor(options, hooks) {
+    this.hooks = hooks;
+    this.#o = {
+      endpoint: options.endpoint,
+      apiKey: options.apiKey,
+      fetch: options.fetch ?? fetch,
+      now: options.now ?? Date.now,
+      random: options.random ?? Math.random,
+      sleep: options.sleep ?? defaultSleep
+    };
+    this.#status = { state: "connecting", since: this.#o.now() };
+  }
+  get status() {
+    return this.#status;
+  }
+  #set(state, next) {
+    const now = this.#o.now();
+    const since = state === "down" ? this.#lostAt : state === this.#status.state ? this.#status.since : now;
+    this.#status = { state, since, ...next !== undefined ? { next } : {} };
+    this.hooks.status(this.#status);
+  }
+  #backoff() {
+    const base = Math.min(RETRY_MAX_MS, RETRY_MIN_MS * 2 ** Math.max(0, this.#failures - 1));
+    return Math.min(RETRY_MAX_MS, Math.round(base * (0.8 + 0.4 * this.#o.random())));
+  }
+  async run(signal) {
+    this.hooks.status(this.#status);
+    while (!signal.aborted) {
+      const ended = await this.#attempt(signal);
+      if (signal.aborted)
+        return;
+      const now = this.#o.now();
+      let wait;
+      if (ended.kind === "planned") {
+        wait = Math.max(PLANNED_MIN_MS, Math.min(ended.retryMs ?? 0, 1e4)) + Math.round(PLANNED_JITTER_MS * this.#o.random());
+      } else {
+        if (!this.#lostAt)
+          this.#lostAt = now;
+        if (ended.kind === "refused") {
+          this.#failures = 0;
+          wait = REFUSED_RETRY_MS;
+          this.hooks.log(`push refused: ${ended.why}; retrying in ${Math.round(wait / 60000)} min`);
+        } else {
+          this.#failures++;
+          wait = Math.max(this.#backoff(), ended.retryMs ?? 0);
+          this.hooks.log(`push unavailable (${ended.why}); retrying in ${Math.round(wait / 1000)} s`);
+        }
+        const lostFor = now - this.#lostAt;
+        if (ended.kind === "refused")
+          this.#set("refused", now + wait);
+        else if (lostFor >= DOWN_AFTER_MS || this.#saidDown)
+          this.#set("down", now + wait);
+        else
+          this.#set("reconnecting", now + wait);
+        this.#maybeDown(now);
+        if (!this.#saidDown && ended.kind !== "refused" && lostFor + wait > DOWN_AFTER_MS) {
+          const untilDown = Math.max(0, DOWN_AFTER_MS - lostFor);
+          await this.#o.sleep(untilDown, signal);
+          if (signal.aborted)
+            return;
+          this.#set("down", now + wait);
+          this.#maybeDown(this.#o.now());
+          wait -= untilDown;
+        }
+      }
+      if (wait > 0)
+        await this.#o.sleep(wait, signal);
+    }
+  }
+  #maybeDown(now) {
+    if (this.#saidDown || !this.#lostAt || now - this.#lostAt < DOWN_AFTER_MS)
+      return;
+    if (this.#status.state === "refused")
+      return;
+    this.#saidDown = true;
+    this.hooks.down(this.#lostAt);
+  }
+  async#attempt(signal) {
+    let res;
+    try {
+      const { ticket, url } = await this.#mint(signal);
+      res = await this.#o.fetch(url, {
+        headers: { accept: "text/event-stream", [TICKET_HEADER]: ticket },
+        redirect: "error",
+        signal
+      });
+    } catch (cause) {
+      if (cause instanceof Refused)
+        return { kind: "refused", why: cause.message };
+      if (cause instanceof Failed)
+        return { kind: "failed", why: cause.message, retryMs: cause.retryMs };
+      return { kind: "failed", why: signal.aborted ? "stopped" : "network error" };
+    }
+    if (res.status === 403) {
+      const code = await res.json().then((b) => typeof b?.code === "string" ? b.code : "").catch(() => "");
+      await res.body?.cancel().catch(() => {});
+      return code === "TICKET_REFUSED" ? { kind: "refused", why: "the gateway refused the key\u2019s ticket" } : { kind: "failed", why: `gateway 403 ${code || "refused"}` };
+    }
+    if (res.status !== 200 || !(res.headers.get("content-type") ?? "").includes("text/event-stream")) {
+      await res.body?.cancel().catch(() => {});
+      return { kind: "failed", why: `gateway ${res.status}`, retryMs: retryAfter2(res) };
+    }
+    const opened = this.#o.now();
+    const back = this.#saidDown;
+    this.#openedAt = opened;
+    this.#steadied = false;
+    this.#set("live");
+    this.hooks.connected(back);
+    this.hooks.alive();
+    let retryMs;
+    let broke = false;
+    try {
+      retryMs = await this.#read(res, signal);
+    } catch {
+      broke = true;
+    }
+    if (signal.aborted)
+      return { kind: "planned" };
+    const lived = this.#o.now() - opened;
+    this.#steady();
+    if (broke)
+      return { kind: "failed", why: "stream broke" };
+    if (lived < MIN_LIVED_MS)
+      return { kind: "failed", why: `stream ended after ${Math.round(lived / 1000)} s`, retryMs };
+    if (lived >= PLANNED_MS || retryMs !== undefined && retryMs <= 1e4)
+      return { kind: "planned", retryMs };
+    return { kind: "failed", why: "stream closed early" };
+  }
+  async#mint(signal) {
+    const at = new URL(this.#o.endpoint.pathname.replace(/\/+$/, "") + "/stream-ticket", this.#o.endpoint);
+    let res;
+    try {
+      res = await this.#o.fetch(at, {
+        method: "POST",
+        headers: { authorization: `Bearer ${this.#o.apiKey}`, accept: "application/json" },
+        redirect: "error",
+        signal
+      });
+    } catch {
+      throw new Failed("Tilori unreachable");
+    }
+    if (res.status === 401 || res.status === 403) {
+      await res.body?.cancel().catch(() => {});
+      throw new Refused(`Tilori ${res.status} on stream-ticket`);
+    }
+    if (!res.ok) {
+      await res.body?.cancel().catch(() => {});
+      throw new Failed(`Tilori ${res.status} on stream-ticket`, retryAfter2(res));
+    }
+    const body = await res.json().catch(() => null);
+    const url = eventsUrl(body?.events_url, this.#o.endpoint);
+    if (typeof body?.ticket !== "string" || !TICKET.test(body.ticket) || !url)
+      throw new Failed("Tilori gave no usable push ticket");
+    return { ticket: body.ticket, url };
+  }
+  async#read(res, signal) {
+    if (!res.body)
+      return;
+    const reader = res.body.getReader();
+    const stop = () => void reader.cancel().catch(() => {});
+    signal.addEventListener("abort", stop, { once: true });
+    const decoder = new TextDecoder;
+    let buffer = "";
+    let event = "";
+    let data = "";
+    let retryMs;
+    try {
+      for (;; ) {
+        const { done, value } = await reader.read();
+        if (done)
+          return retryMs;
+        buffer += decoder.decode(value, { stream: true });
+        if (buffer.length > MAX_EVENT_BYTES)
+          throw new Error("event too large");
+        let nl;
+        while ((nl = buffer.search(/\r\n|\r|\n/)) >= 0) {
+          const line = buffer.slice(0, nl);
+          buffer = buffer.slice(nl + (buffer.startsWith(`\r
+`, nl) ? 2 : 1));
+          if (line === "") {
+            if (event === "events" && data)
+              this.#frame(data);
+            event = "";
+            data = "";
+            continue;
+          }
+          if (line.startsWith(":")) {
+            this.hooks.alive();
+            this.#steady();
+            continue;
+          }
+          const colon = line.indexOf(":");
+          const field = colon < 0 ? line : line.slice(0, colon);
+          const value = colon < 0 ? "" : line.slice(colon + 1).replace(/^ /, "");
+          if (field === "event")
+            event = value;
+          else if (field === "data") {
+            data = data ? `${data}
+${value}` : value;
+            if (data.length > MAX_EVENT_BYTES)
+              throw new Error("event too large");
+          } else if (field === "retry" && /^\d{1,7}$/.test(value))
+            retryMs = Number(value);
+        }
+      }
+    } finally {
+      signal.removeEventListener("abort", stop);
+    }
+  }
+  #steady() {
+    if (this.#steadied || this.#o.now() - this.#openedAt < MIN_LIVED_MS)
+      return;
+    this.#steadied = true;
+    this.#failures = 0;
+    this.#lostAt = 0;
+    this.#saidDown = false;
+    this.hooks.stable();
+  }
+  #frame(data) {
+    let id;
+    try {
+      id = JSON.parse(data)?.subscriptionId;
+    } catch {
+      return;
+    }
+    if (typeof id !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(id))
+      return;
+    this.hooks.alive();
+    this.#steady();
+    this.hooks.frame(id);
+  }
+}
+
 // src/ratelimit.ts
 class WakeLimiter {
   now;
@@ -18235,6 +18616,7 @@ class WakeLimiter {
 }
 
 // src/router.ts
+var PUSH_POLL_GAP_MS = 1000;
 var RECENT_MS = 2 * 3600000;
 var POSTS_LOW = 100;
 var POSTS_LEFT_MS = 60000;
@@ -18334,9 +18716,77 @@ class Router {
         reminderAt: cfg.reminder ? Date.now() + cfg.reminder.everyMs : 0,
         stats: { wakes: 0, events: 0, delayed: 0, reminders: 0 },
         profile: { at: -Infinity, value: { postsLeft: null, toolsHash: null } },
-        blocked: { since: 0, wakes: 0, logged: false }
+        blocked: { since: 0, wakes: 0, logged: false },
+        push: null
       });
+      const st = this.#agents.get(cfg.handle);
+      if (cfg.push)
+        st.push = { stream: this.#pushStream(st, cfg.push), seq: 0, kick: makeKick(), back: false, caught: 0, aliveAt: 0, polledAt: 0 };
     }
+  }
+  #pushStream(st, options) {
+    const handle = st.cfg.handle;
+    const nudge = () => {
+      const p = st.push;
+      p.seq++;
+      const k = p.kick;
+      p.kick = makeKick();
+      k.fire();
+    };
+    return new PushStream(options, {
+      frame: () => nudge(),
+      connected: (back) => {
+        if (back && !st.push.back) {
+          st.push.back = true;
+          st.push.caught = 0;
+        }
+        this.#log(`[${handle}] push stream open${back ? " again" : ""}`);
+        nudge();
+      },
+      stable: () => {
+        const p = st.push;
+        if (!p.back)
+          return;
+        p.back = false;
+        this.#pushLine(st, { state: "back", caught: p.caught });
+      },
+      down: (since) => this.#pushLine(st, { state: "down", since }),
+      alive: () => {
+        const now = Date.now();
+        if (now - st.push.aliveAt < 30000)
+          return;
+        st.push.aliveAt = now;
+        this.#signal(handle, "watching");
+        this.#pushStatus(handle, st.push.stream.status);
+      },
+      status: (s) => this.#pushStatus(handle, s),
+      log: (m) => this.#log(`[${handle}] ${m}`)
+    });
+  }
+  #pushStatus(handle, s) {
+    if (this.#signalDir === undefined)
+      return;
+    try {
+      writePushSignal(this.#signalDir, handle, s);
+    } catch (cause) {
+      const key = `push-${handle}`;
+      if (this.#signalFailed.has(key))
+        return;
+      this.#signalFailed.add(key);
+      this.#log(`[${handle}] could not update push- in the run directory: ${errText(cause)}`);
+    }
+  }
+  #pushLine(st, push) {
+    const injector = st.injectors.at(-1);
+    const wake = { wake_id: randomUUID2(), agent: st.cfg.handle, events: [], resync_required: false, push };
+    if (!injector)
+      return;
+    Promise.resolve().then(() => injector.deliver(wake)).catch(() => {});
+  }
+  async#waitPush(st, seen, signal) {
+    const p = st.push;
+    while (p.seq === seen && !signal.aborted)
+      await sleep(this.#renewEveryMs, signal, p.kick.promise);
   }
   get agents() {
     return [...this.#agents.keys()];
@@ -18424,7 +18874,17 @@ class Router {
   async run(signal) {
     await Promise.all([...this.#agents.values()].map(async (st) => {
       try {
-        await this.#runAgent(st, signal);
+        const stop = new AbortController;
+        const end = () => stop.abort();
+        signal?.addEventListener("abort", end, { once: true });
+        try {
+          await Promise.all([
+            this.#runAgent(st, signal).finally(end),
+            st.push ? st.push.stream.run(stop.signal) : Promise.resolve()
+          ]);
+        } finally {
+          signal?.removeEventListener("abort", end);
+        }
       } finally {
         await st.cfg.client.close();
       }
@@ -18494,9 +18954,11 @@ class Router {
     const { client, handle } = st.cfg;
     const signal = gen.signal;
     let failures = 0;
+    let seen = -1;
+    const wait = st.push ? 0 : this.#waitMs;
     while (!signal.aborted) {
       const usable = subs.filter((s) => !st.dropped.has(specKey(s)));
-      if (st.singleUntil > Date.now() || usable.length > MAX_POLL_SUBSCRIPTIONS) {
+      if (!st.push && (st.singleUntil > Date.now() || usable.length > MAX_POLL_SUBSCRIPTIONS)) {
         await Promise.all(usable.map((sub) => this.#pollSubscription(st, sub, pending, gen)));
         return;
       }
@@ -18510,6 +18972,21 @@ class Router {
         await sleep(Math.min(this.#retryMs, ...resting), signal, st.polled.promise);
         continue;
       }
+      if (st.push && st.push.seq === seen) {
+        await this.#waitPush(st, seen, signal);
+        seen = -1;
+        continue;
+      }
+      if (st.push) {
+        const gap = st.push.polledAt + PUSH_POLL_GAP_MS - Date.now();
+        if (gap > 0) {
+          await sleep(gap, signal);
+          continue;
+        }
+        st.push.polledAt = Date.now();
+      }
+      const covered = st.push?.seq ?? 0;
+      seen = -1;
       const open = this.#openAbandoned(st);
       if (open.length > 1) {
         await sleep(Math.min(...open) - Date.now(), signal);
@@ -18527,7 +19004,7 @@ class Router {
           if (call.signal.aborted)
             return;
           restarted = true;
-          st.abandoned.push(startedAt + this.#waitMs + 1000);
+          st.abandoned.push(startedAt + wait + 1000);
           call.abort();
         };
         st.onPolled = () => {
@@ -18543,7 +19020,7 @@ class Router {
       }
       try {
         this.#signal(handle, "attempting");
-        const res = await client.pollMany(idle.map((s) => s.id), this.#waitMs, call.signal);
+        const res = st.push ? await this.#pollNow(st, idle, call.signal) : await client.pollMany(idle.map((s) => s.id), this.#waitMs, call.signal);
         if (res.errors.length < idle.length)
           this.#signal(handle, "watching");
         failures = 0;
@@ -18558,6 +19035,11 @@ class Router {
         }
         if (got)
           this.#wake(st);
+        if (st.push) {
+          seen = got ? -1 : covered;
+          if (st.push.back)
+            st.push.caught += res.deliveries.reduce((n, d) => n + d.events.length, 0);
+        }
         let resubscribe = false;
         for (const e of res.errors) {
           const sub = idle.find((s) => s.id === e.subscription_id);
@@ -18581,13 +19063,13 @@ class Router {
           await sleep(res.retryAfterMs, signal);
         } else if (got) {
           await sleep(this.#retryMs, signal, st.polled.promise);
-        } else if (!res.errors.length && this.#waitMs >= 5000 && Date.now() - startedAt < 1000) {
+        } else if (!res.errors.length && wait >= 5000 && Date.now() - startedAt < 1000) {
           await sleep(3000, signal);
         }
       } catch (cause) {
         if (signal.aborted) {
           if (!restarted)
-            st.abandoned.push(startedAt + this.#waitMs + 1000);
+            st.abandoned.push(startedAt + wait + 1000);
           return;
         }
         if (restarted)
@@ -18614,6 +19096,38 @@ class Router {
         signal.removeEventListener("abort", stopCall);
       }
     }
+  }
+  async#pollNow(st, subs, signal) {
+    const { client } = st.cfg;
+    if (st.singleUntil <= Date.now()) {
+      try {
+        const out = { deliveries: [], errors: [] };
+        for (let i = 0;i < subs.length; i += MAX_POLL_SUBSCRIPTIONS) {
+          const r = await client.pollMany(subs.slice(i, i + MAX_POLL_SUBSCRIPTIONS).map((s) => s.id), 0, signal);
+          out.deliveries.push(...r.deliveries);
+          out.errors.push(...r.errors);
+          if (r.retryAfterMs) {
+            out.retryAfterMs = Math.max(out.retryAfterMs ?? 0, r.retryAfterMs);
+            break;
+          }
+        }
+        return out;
+      } catch (cause) {
+        if (!(cause instanceof MultiPollUnsupported))
+          throw cause;
+        st.singleUntil = Date.now() + this.#renewEveryMs;
+        this.#log(`[${st.cfg.handle}] server does not accept subscription_ids; polling each subscription separately`);
+      }
+    }
+    const out = { deliveries: [], errors: [] };
+    for (const sub of subs) {
+      const r = await client.pollOne(sub.id, 0, signal);
+      if (r.delivery)
+        out.deliveries.push(r.delivery);
+      if (r.retryAfterMs)
+        out.retryAfterMs = Math.max(out.retryAfterMs ?? 0, r.retryAfterMs);
+    }
+    return out;
   }
   #restingMs(st, id) {
     const until = st.paused.get(id);
@@ -19482,11 +19996,8 @@ function signalDir(log = () => {}) {
 function directRouter(opts) {
   const settings = opts.config.agents?.[opts.agent] ?? {};
   const url = keyUrl(opts.config, opts.url);
-  const client = new TiloriAgentClient({
-    url,
-    apiKey: readKey(opts.agent),
-    logger: opts.logger
-  });
+  const apiKey = readKey(opts.agent);
+  const client = new TiloriAgentClient({ url, apiKey, logger: opts.logger });
   return new Router({
     agents: [
       {
@@ -19496,7 +20007,8 @@ function directRouter(opts) {
         wakesPerHour: settings.wakes_per_hour,
         directWakesPerHour: settings.direct_wakes_per_hour,
         reminder: reminderSettings(settings),
-        stallMinutes: stallMinutes(settings.stall_minutes)
+        stallMinutes: stallMinutes(settings.stall_minutes),
+        ...pushEnabled(settings) ? { push: { endpoint: url, apiKey } } : {}
       }
     ],
     logger: opts.logger,
@@ -19983,7 +20495,9 @@ async function main(argv = process.argv.slice(2)) {
         if (!exec)
           throw new Error('watch needs --notify-lines or --exec "<command>".');
         const settings = config.agents?.[agent] ?? {};
-        const client = new TiloriAgentClient({ url: keyUrl(config, str(args, "url")), apiKey: readKey(agent), logger: log });
+        const url = keyUrl(config, str(args, "url"));
+        const apiKey = readKey(agent);
+        const client = new TiloriAgentClient({ url, apiKey, logger: log });
         const router = new Router({
           agents: [
             {
@@ -19993,7 +20507,8 @@ async function main(argv = process.argv.slice(2)) {
               wakesPerHour: settings.wakes_per_hour,
               directWakesPerHour: settings.direct_wakes_per_hour,
               reminder: reminderSettings(settings),
-              stallMinutes: stallMinutes(settings.stall_minutes)
+              stallMinutes: stallMinutes(settings.stall_minutes),
+              ...pushEnabled(settings) ? { push: { endpoint: url, apiKey } } : {}
             }
           ],
           logger: log,
@@ -20014,9 +20529,11 @@ async function main(argv = process.argv.slice(2)) {
           throw new Error(`No agent keys in ${join5(tiloriHome(), "agents")}. Run tilori-agent init first.`);
         const agents = handles.map((handle) => {
           const s = config.agents?.[handle] ?? {};
+          const apiKey = readKey(handle);
           return {
             handle,
-            client: new TiloriAgentClient({ url, apiKey: readKey(handle), logger: log }),
+            client: new TiloriAgentClient({ url, apiKey, logger: log }),
+            ...pushEnabled(s) ? { push: { endpoint: url, apiKey } } : {},
             subscriptions: desiredSubscriptions(s),
             wakesPerHour: s.wakes_per_hour,
             directWakesPerHour: s.direct_wakes_per_hour,
@@ -20078,7 +20595,10 @@ async function main(argv = process.argv.slice(2)) {
           } catch {
             stall = undefined;
           }
-          console.log(statusLine(handle, promptSignal(handle), watchSignal(handle, undefined, router), { stallMinutes: stall }));
+          console.log(statusLine(handle, promptSignal(handle), watchSignal(handle, undefined, router), {
+            stallMinutes: stall,
+            push: readPushSignal(handle)
+          }));
           let broad = null;
           try {
             broad = unfilteredPostsWarning(handle, desiredSubscriptions(agents?.[handle]));
