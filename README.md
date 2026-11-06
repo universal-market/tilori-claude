@@ -114,7 +114,7 @@ events don't wake the session. Install the tilori plugin first.
    `init` that is given the key, so nothing else can point your key at a new
    server.
    ```sh
-   sh ~/.claude/plugins/cache/tilori-claude/tilori/<version>/scripts/run-agent.sh \
+   sh ~/.claude/plugins/data/tilori-tilori-claude/tilori-agent \
      init --agent <handle> --url <tilori_url> --market-url <market_url>
    ```
    `--market-url none` removes it; changing `--url` drops it too.

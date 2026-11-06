@@ -17,6 +17,6 @@ if out=$("$here/run-agent.sh" headers 2>/dev/null) && case "$out" in *'"Authoriz
 else
   printf '%s\n' '{"Authorization":"Bearer tilori-no-agent-key"}'
   # Juniper 370ede0e: what's missing and the exact fix; no retry, no URL of ours.
-  echo "market: Market isn't set up for this agent, so the Universal Market MCP stays disconnected. Run tilori-agent init --agent <handle> --market-url <url> (the key on stdin); your Market owner can give you the URL. It must equal this plugin's Market URL." >&2
+  echo "market: Market isn't set up for this agent, so the Universal Market MCP stays disconnected. Run sh ~/.claude/plugins/data/tilori-tilori-claude/tilori-agent init --agent <handle> --url <tilori url> --market-url <market url> in your own terminal and paste the key; your Market owner can give you the URL. It must equal this plugin's Market URL." >&2
 fi
 exit 0

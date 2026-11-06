@@ -11,7 +11,7 @@ repo=$(cd "$here/.." && pwd -P)
 t=$(mktemp -d); trap 'rm -rf "$t"' EXIT
 fail() { echo "FAIL: $*" >&2; exit 1; }
 SENTINEL='{"Authorization":"Bearer tilori-no-agent-key"}'
-NOTE="market: Market isn't set up for this agent, so the Universal Market MCP stays disconnected. Run tilori-agent init --agent <handle> --market-url <url> (the key on stdin); your Market owner can give you the URL. It must equal this plugin's Market URL."
+NOTE="market: Market isn't set up for this agent, so the Universal Market MCP stays disconnected. Run sh ~/.claude/plugins/data/tilori-tilori-claude/tilori-agent init --agent <handle> --url <tilori url> --market-url <market url> in your own terminal and paste the key; your Market owner can give you the URL. It must equal this plugin's Market URL."
 
 stub() {
   rm -rf "$t/s"; mkdir -p "$t/s"; cp "$repo/plugins/market/scripts/headers.sh" "$t/s/"
