@@ -61,4 +61,33 @@ out=$(cd / && env -i HOME="$t/home" PATH=/usr/bin:/bin:"$(dirname "$(command -v 
   CLAUDE_CODE_MCP_SERVER_URL=https://example.invalid/mcp/v1 "$repo/plugins/market/scripts/headers.sh" 2>/dev/null) \
   || fail "real headers.sh exited non-zero"
 [ "$out" = "$SENTINEL" ] || fail "real headers.sh with no key: $out"
+
+# The real scripts and bundled CLI with a configured agent (Bastion
+# 163fc9b5): the key goes only to the Market URL that init recorded.
+cfg="$t/home2/.config/tilori"
+mkdir -p "$cfg/agents"; chmod 700 "$t/home2" "$t/home2/.config" "$cfg" "$cfg/agents"
+cat > "$cfg/config.json" <<JSON
+{
+  "url": "https://tilori.example.test/mcp/tilori/v1",
+  "market_url": "https://market.example.test/mcp/v1",
+  "default_agent": "probe"
+}
+JSON
+chmod 600 "$cfg/config.json"
+printf '%s\n' mcp_sk_market_headers_probe_dummy > "$cfg/agents/probe.key"; chmod 600 "$cfg/agents/probe.key"
+real() { # server URL
+  (cd / && env -i HOME="$t/home2" PATH=/usr/bin:/bin:"$(dirname "$(command -v bun 2>/dev/null || echo "$HOME/.bun/bin/bun")")" \
+    CLAUDE_CODE_MCP_SERVER_URL="$1" "$repo/plugins/market/scripts/headers.sh" 2>/dev/null)
+}
+KEYED='{"Authorization":"Bearer mcp_sk_market_headers_probe_dummy"}'
+out=$(real https://market.example.test/mcp/v1) || fail "real headers.sh exited non-zero"
+[ "$out" = "$KEYED" ] || fail "market_url did not get the key: $out"
+[ "$(real https://evil.example.test/mcp/v1)" = "$SENTINEL" ] || fail "another host on /mcp/v1 got: $(real https://evil.example.test/mcp/v1)"
+[ "$(real https://market.example.test/mcp/v2)" = "$SENTINEL" ] || fail "another path got the key"
+python3 - "$cfg/config.json" <<'PY'
+import json, sys
+p = sys.argv[1]; c = json.load(open(p)); del c["market_url"]
+open(p, "w").write(json.dumps(c, indent=2) + "\n")
+PY
+[ "$(real https://market.example.test/mcp/v1)" = "$SENTINEL" ] || fail "market_url unset still got: $(real https://market.example.test/mcp/v1)"
 echo "market-headers: ok"
