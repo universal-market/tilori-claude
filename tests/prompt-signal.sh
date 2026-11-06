@@ -72,6 +72,20 @@ run activity TILORI_AGENT=wren
 run activity TILORI_AGENT=wren TILORI_SOCKET=relative/router.sock
 [ ! -e relative ] || fail "relative dir used"
 
+# A second home (UNI-751) has its own run dir, even with XDG set; the default
+# home named through TILORI_HOME (directly or via a symlink) keeps XDG's.
+mkdir -m 700 "$t/prod" "$t/prod/run"
+rm -f "$run_dir/activity-wren"
+run activity TILORI_AGENT=wren TILORI_HOME="$t/prod" XDG_RUNTIME_DIR="$t/xdg"
+[ -f "$t/prod/run/activity-wren" ] || fail "other home's run dir not used"
+[ ! -e "$run_dir/activity-wren" ] || fail "other home touched the shared XDG run dir"
+run activity TILORI_AGENT=wren TILORI_HOME="$t/home/.config/tilori" XDG_RUNTIME_DIR="$t/xdg"
+[ -f "$run_dir/activity-wren" ] || fail "default home via TILORI_HOME did not keep XDG"
+rm "$run_dir/activity-wren"
+ln -s "$t/home/.config/tilori" "$t/default-alias"
+run activity TILORI_AGENT=wren TILORI_HOME="$t/default-alias" XDG_RUNTIME_DIR="$t/xdg"
+[ -f "$run_dir/activity-wren" ] || fail "default home via a symlink did not keep XDG"
+
 # A wide dir, a symlinked dir and a symlinked file are left alone.
 mkdir -m 755 "$t/wide" && mkdir "$t/wide/tilori" && chmod 755 "$t/wide/tilori"
 run activity TILORI_AGENT=wren XDG_RUNTIME_DIR="$t/wide"
