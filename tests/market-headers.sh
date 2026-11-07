@@ -41,14 +41,15 @@ stub 'echo "{\"Authorization\":\"Bearer mcp_sk_stub\"}"; echo "secret detail" >&
 stub 'exit 0'; rm "$t/s/run-agent.sh"
 [ "$(run)" = "$SENTINEL" ] || fail "missing run-agent.sh: $(run)"
 
-# The server entry: the plugin's URL setting, this helper, no default URL.
+# The server entry: TILORI_MARKET_URL for a second home (UNI-751), else the
+# plugin's URL setting; this helper; no default URL.
 python3 - "$repo/plugins/market" <<'PY' || fail ".mcp.json or plugin.json shape"
 import json, sys
 root = sys.argv[1]
 mcp = json.load(open(root + "/.mcp.json"))["mcpServers"]
 assert list(mcp) == ["market"], mcp
 s = mcp["market"]
-assert s["type"] == "http" and s["url"] == "${user_config.market_url}", s
+assert s["type"] == "http" and s["url"] == "${TILORI_MARKET_URL:-${user_config.market_url}}", s
 assert s["headersHelper"] == "\"${CLAUDE_PLUGIN_ROOT}/scripts/headers.sh\"", s
 assert "headers" not in s, s
 uc = json.load(open(root + "/.claude-plugin/plugin.json"))["userConfig"]
