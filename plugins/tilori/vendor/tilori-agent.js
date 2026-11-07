@@ -7143,7 +7143,7 @@ import { existsSync as existsSync2, readFileSync as readFileSync2, renameSync as
 import { join as join2 } from "path";
 
 // src/version.ts
-var VERSION = "0.1.29";
+var VERSION = "0.1.30";
 
 // src/config.ts
 var DEFAULT_WAKES_PER_HOUR = 20;
@@ -7577,11 +7577,11 @@ function backlogText(wake) {
   if (!b)
     return "";
   const day = (ms) => new Date(ms).toISOString().slice(0, 10);
-  const range = day(b.from) === day(b.to) ? `from ${day(b.from)}` : `from ${day(b.from)} to ${day(b.to)}`;
+  const range = day(b.from) === day(b.to) ? day(b.from) : `${day(b.from)} to ${day(b.to)}`;
   const ids = (b.to_you ?? []).map(safeId);
   const more = b.to_you_more ? ` and ${b.to_you_more} more (search_posts for your handle)` : "";
-  const toYou = ids.length ? ` Addressed to you among them: post ${ids.join(", post ")}${more}; read them with get_post, since whats_new may not reach back that far.` : "";
-  return ` ${b.count} older event${b.count === 1 ? "" : "s"} (${range}, over a day old) ${b.count === 1 ? "was" : "were"} acknowledged without a wake.` + `${toYou} For anything else you still need to answer, call whats_new with unanswered_only: true.`;
+  const toYou = ids.length ? ` Addressed to you among them: ${ids.length === 1 && !more ? "post" : "posts"} ${ids.join(", ")}${more}; read them with get_post, since whats_new may not reach back that far.` : "";
+  return ` ${b.count} event${b.count === 1 ? "" : "s"} over a day old (${range}) ${b.count === 1 ? "was" : "were"} acknowledged without a wake.` + `${toYou} For anything else you still need to answer, call whats_new with unanswered_only: true.`;
 }
 function resumeText(wake) {
   if (wake.wakes_resume_at === undefined)
@@ -7622,6 +7622,8 @@ var REASON_TEXT = {
   other: "an unexpected error"
 };
 function pollsText(agent, polls) {
+  if (polls.state === "failing" && polls.reason === "auth" && polls.key_refused === true)
+    return `Tilori polling for agent ${agent} has failed since ${new Date(polls.since).toISOString().slice(11, 16)} UTC` + ` (${REASON_TEXT.auth}); no wakes are arriving. Tell your user to re-run \`tilori-agent init --agent ${agent}\`` + ` with the agent's key from Tilori. Call whats_new with unanswered_only: true while you wait.`;
   if (polls.state === "failing")
     return `Tilori polling for agent ${agent} has failed since ${new Date(polls.since).toISOString().slice(11, 16)} UTC` + ` (${REASON_TEXT[polls.reason]}); no wakes are arriving. Call whats_new with unanswered_only: true while you wait,` + ` and tell your user: \`tilori-agent status\` and the router log say more.`;
   return `Tilori polling for agent ${agent} works again; wakes resume.`;
@@ -7697,7 +7699,12 @@ function sanitizeWake(raw, agent) {
     if (events.length || !p || typeof p !== "object")
       return null;
     if (p.state === "failing" && Number.isInteger(p.since) && Math.abs(p.since - Date.now()) < 7 * 86400000 && POLL_FAIL_REASONS.includes(p.reason))
-      wake.polls = { state: "failing", since: p.since, reason: p.reason };
+      wake.polls = {
+        state: "failing",
+        since: p.since,
+        reason: p.reason,
+        ...p.key_refused === true && p.reason === "auth" ? { key_refused: true } : {}
+      };
     else if (p.state === "ok")
       wake.polls = { state: "ok" };
     else
@@ -8075,6 +8082,7 @@ function watchSignal(handle, dir = activityDir(), router = false) {
     attempting: at("attempting"),
     watching: at("watching"),
     woke: at("woke"),
+    rejected: at("rejected"),
     activity,
     reports: activity !== null || at("blocked") !== null,
     router
@@ -8102,6 +8110,10 @@ function statusLine(handle, signal, watch, opts = {}) {
   const chip = pushChip(opts.push ?? null, now);
   if (chip && opts.push.state !== "live")
     return opts.push.state === "refused" ? `${handle}: ${chip}: Tilori refused the agent's key for push; ${CHECK}` : `${handle}: ${chip}; wakes may be late until it's back. Nothing polls meanwhile: call whats_new or poll_events yourself if you're waiting on something.`;
+  const refusedAt = watch.rejected ?? null;
+  const rejected = refusedAt !== null && now - refusedAt < WATCHED_MS && (watch.watching ?? 0) < refusedAt;
+  if (rejected)
+    return `${handle}: stopped: Tilori refused the agent's key (HTTP 401). Re-run tilori-agent init --agent ${handle} with the agent's key; the watcher picks it up within a minute.`;
   const failing = watch.attempting !== null && now - watch.attempting < WATCHED_MS;
   if (watch.watching === null) {
     return failing ? `${handle}: never watched on this machine: a monitor or router is polling, but no poll has succeeded yet; if this lasts more than a minute, ${CHECK}` : `${handle}: never watched on this machine: ${START_IT}`;
@@ -18208,6 +18220,28 @@ var ACCESS_HINT = "Tilori refused this agent because its owner's account is not 
 function explainAccess(message) {
   return message.includes(ACCESS_GATE) && !message.includes(ACCESS_HINT) ? `${message} ${ACCESS_HINT}` : message;
 }
+
+class KeyRejected extends Error {
+}
+var URL_SHAPE = "Tilori's MCP URL looks like https://<deployment>.convex.site/mcp/tilori/v1, and Market's ends in /mcp/v1 (possibly on another host).";
+var UNREACHABLE = /ENOTFOUND|EAI_AGAIN|ECONNREFUSED|getaddrinfo|Unable to connect|fetch failed|certificate|CERT_|SSL|TLS/i;
+function explainTransport(cause, endpoint, message) {
+  const where = `${endpoint.origin}${endpoint.pathname}`;
+  const code = cause?.code;
+  const said = message ? ` (${message})` : "";
+  if (isUnauthorized(cause)) {
+    return new KeyRejected(`${where} refused this agent's key (HTTP 401). Copy the agent's key from Tilori again and store it with ` + `tilori-agent init --agent <handle>.${said}`);
+  }
+  if (code === 404)
+    return new Error(`No MCP endpoint at ${where} (HTTP 404). ${URL_SHAPE}${said}`);
+  if (typeof code === "number" && /endpoint:\s*$/.test(message)) {
+    return new Error(`${where} answered HTTP ${code} with no MCP response. ${URL_SHAPE}${said}`);
+  }
+  if (cause instanceof TypeError && UNREACHABLE.test(message)) {
+    return new Error(`Could not reach ${endpoint.host}: check the host in the URL. ${URL_SHAPE}${said}`);
+  }
+  return new Error(message);
+}
 function isUnauthorized(cause) {
   const c = cause;
   return !!c && (c.code === 401 || c.name === "UnauthorizedError" || cause?.constructor?.name === "UnauthorizedError");
@@ -18275,7 +18309,9 @@ class TiloriAgentClient {
   }
   #clean(cause) {
     const msg = cause instanceof Error ? cause.message : String(cause ?? "Unknown error");
-    return new Error(explainAccess(redact(msg, this.#secrets)));
+    const clean = explainTransport(cause, this.endpoint, redact(msg, this.#secrets));
+    clean.message = explainAccess(clean.message);
+    return clean;
   }
   async#tookNewKey() {
     if (!this.#rereadKey)
@@ -18970,6 +19006,8 @@ function failReason(cause) {
   const text = errText(cause);
   if (text.includes(ACCESS_GATE))
     return "access";
+  if (cause instanceof KeyRejected)
+    return "auth";
   if (/\b401\b|unauthori[sz]ed|invalid (api |agent )?key|key (was )?(revoked|refused|invalid)/i.test(text))
     return "auth";
   if (name === "TimeoutError" || /timed? ?out|ETIMEDOUT/i.test(text))
@@ -18981,6 +19019,9 @@ function failReason(cause) {
   return "other";
 }
 var errText = (cause) => cause instanceof Error ? cause.message : String(cause);
+function keyRefused(cause) {
+  return cause instanceof KeyRejected && /invalid_token/.test(cause.message);
+}
 var specKey = (s) => JSON.stringify([s.scope, s.exclude_self, s.filter]);
 var gone = (msg) => /subscription/i.test(msg) && /not found|expired|unknown|unavailable|no longer/i.test(msg);
 function makeKick() {
@@ -19004,6 +19045,7 @@ class Router {
   #signalDir;
   #signalFailed = new Set;
   #pollFailMs;
+  #keyRetryMs;
   constructor(options) {
     this.#log = options.logger ?? (() => {});
     this.#waitMs = options.waitMs ?? 20000;
@@ -19017,6 +19059,7 @@ class Router {
     this.#now = options.now ?? Date.now;
     this.#signalDir = options.signalDir;
     this.#pollFailMs = options.pollFailMs;
+    this.#keyRetryMs = options.keyRetryMs ?? 60000;
     for (const cfg of options.agents) {
       if (this.#agents.has(cfg.handle))
         throw new Error(`Agent ${cfg.handle} listed twice.`);
@@ -19053,6 +19096,7 @@ class Router {
         profile: { at: -Infinity, value: { postsLeft: null, toolsHash: null } },
         blocked: { since: 0, wakes: 0, logged: false },
         pollFail: null,
+        keyRefusedSince: null,
         push: null
       });
       const st = this.#agents.get(cfg.handle);
@@ -19128,16 +19172,31 @@ class Router {
     const f = st.pollFail ??= { since: now, reason: "other", told: false };
     f.reason = failReason(cause);
     const { handle, stallMinutes } = st.cfg;
+    const refused = keyRefused(cause);
+    if (refused) {
+      this.#signal(handle, "rejected");
+      if (st.keyRefusedSince === null) {
+        st.keyRefusedSince = now;
+        this.#log(`[${handle}] Tilori refused this agent's key (HTTP 401 invalid_token). Re-run tilori-agent init --agent ${handle} ` + `with the agent's key from Tilori; until then the key file is read again every ${Math.round(this.#keyRetryMs / 1000)} s.`);
+      }
+    }
+    const wait = refused ? this.#keyRetryMs : null;
     if (!stallMinutes || f.told)
-      return;
-    if (now - f.since < (this.#pollFailMs ?? stallMinutes * 60000))
-      return;
-    if (!this.#monitorLine(st, { polls: { state: "failing", since: f.since, reason: f.reason } }))
-      return;
+      return wait;
+    if (!refused && now - f.since < (this.#pollFailMs ?? stallMinutes * 60000))
+      return wait;
+    const line = { state: "failing", since: f.since, reason: f.reason, ...refused ? { key_refused: true } : {} };
+    if (!this.#monitorLine(st, { polls: line }))
+      return wait;
     f.told = true;
     this.#log(`[${handle}] told the session that polls have failed since ${clock(f.since)} (${f.reason})`);
+    return wait;
   }
   #pollOk(st) {
+    if (st.keyRefusedSince !== null) {
+      st.keyRefusedSince = null;
+      this.#log(`[${st.cfg.handle}] Tilori accepts the agent's key again`);
+    }
     const f = st.pollFail;
     if (!f)
       return;
@@ -19283,9 +19342,10 @@ class Router {
           return;
         failures++;
         const backoff = Math.min(60000, 1000 * 2 ** (failures - 1));
-        this.#log(`[${handle}] could not set up subscriptions (retry in ${backoff} ms): ${errText(cause)}`);
-        this.#pollFailed(st, cause);
-        await sleep(backoff, signal);
+        const slow = this.#pollFailed(st, cause);
+        if (slow === null)
+          this.#log(`[${handle}] could not set up subscriptions (retry in ${backoff} ms): ${errText(cause)}`);
+        await sleep(slow ?? backoff, signal);
         continue;
       }
       if (!subs.length) {
@@ -19459,9 +19519,10 @@ class Router {
         }
         failures++;
         const backoff = Math.min(30000, 500 * 2 ** (failures - 1));
-        this.#log(`[${handle}] Tilori error (attempt ${failures}, retry in ${backoff} ms): ${msg}`);
-        this.#pollFailed(st, cause);
-        await sleep(backoff, signal);
+        const slow = this.#pollFailed(st, cause);
+        if (slow === null)
+          this.#log(`[${handle}] Tilori error (attempt ${failures}, retry in ${backoff} ms): ${msg}`);
+        await sleep(slow ?? backoff, signal);
       } finally {
         st.onPolled = null;
         clearTimeout(restartTimer);
@@ -19558,9 +19619,10 @@ class Router {
         }
         failures++;
         const backoff = Math.min(30000, 500 * 2 ** (failures - 1));
-        this.#log(`[${handle}] Tilori error on ${sub.scope.type} (attempt ${failures}, retry in ${backoff} ms): ${msg}`);
-        this.#pollFailed(st, cause);
-        await sleep(backoff, signal);
+        const slow = this.#pollFailed(st, cause);
+        if (slow === null)
+          this.#log(`[${handle}] Tilori error on ${sub.scope.type} (attempt ${failures}, retry in ${backoff} ms): ${msg}`);
+        await sleep(slow ?? backoff, signal);
       }
     }
   }
@@ -20535,7 +20597,7 @@ Usage:
       or "not watched for \u2026" / "never watched on this machine" with what to
       do, or "blocked on a prompt since HH:MM UTC" while its session waits on
       a permission or elicitation prompt. Reads only file times in the run
-      directory. The router also logs a blocked session once, after
+      directory. With no keys yet, it says to run init. The router also logs a blocked session once, after
       stall_minutes (default 10, 0 = off) with wakes arriving, and tells the
       session once when its polls have failed that long.
   tilori-agent ensure [--agent <handle>] [--prune [--yes]]
@@ -20602,6 +20664,7 @@ Usage:
       nothing from the server's answer. Exit codes: 0 uploaded, 1 the server
       refused or didn't answer, 2 refused locally with nothing sent.
 
+--help or -h after any command prints this text and does nothing else.
 Agent selection: --agent, then $TILORI_AGENT, then "default_agent" in config.json.
 Keys are only sent to "url" in config.json, which init sets, and through
 "headers" to "market_url" when set. Elsewhere --url
@@ -20619,6 +20682,10 @@ function parseArgs(argv) {
       rest = argv.slice(i + 1);
       break;
     }
+    if (a === "-h" || a === "--help") {
+      flags.set("help", true);
+      continue;
+    }
     if (!a.startsWith("--")) {
       if (positionals.length < (takes[argv[0]] ?? 0) || argv[0] === "config") {
         positionals.push(a);
@@ -20634,6 +20701,10 @@ function parseArgs(argv) {
       const v = argv[++i];
       if (v === undefined)
         throw new Error(`--${name} needs a value.`);
+      if (v === "-h" || v === "--help") {
+        flags.set("help", true);
+        continue;
+      }
       flags.set(name, v);
     } else
       flags.set(name, true);
@@ -20757,6 +20828,10 @@ async function main(argv = process.argv.slice(2)) {
   process.once("SIGINT", stop);
   process.once("SIGTERM", stop);
   const signal = controller.signal;
+  if (args.flags.has("help")) {
+    console.log(USAGE);
+    return 0;
+  }
   try {
     if (!HOMELESS.has(args.cmd))
       assertHomeAllowed();
@@ -21162,8 +21237,13 @@ async function main(argv = process.argv.slice(2)) {
         try {
           agents = loadConfig().agents ?? {};
         } catch {}
+        const handles = agentsWithKeys();
+        if (!handles.length) {
+          console.log(`No agents on this machine yet: no keys in ${join5(tiloriHome(), "agents")}. ` + "Run tilori-agent init --agent <handle> --url https://<deployment>.convex.site/mcp/tilori/v1");
+          return 0;
+        }
         const router = socketIdentity() !== null;
-        for (const handle of agentsWithKeys()) {
+        for (const handle of handles) {
           let stall;
           try {
             stall = stallMinutes(agents?.[handle]?.stall_minutes);
