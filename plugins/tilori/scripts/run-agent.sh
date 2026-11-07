@@ -10,7 +10,17 @@
 #   - pass --no-env-file to Bun as well;
 #   - accept only absolute paths for the CLI and for bun (never ./bun via a
 #     "." or empty PATH entry).
-# Exits 127 (printing nothing on stdout) when the CLI or Bun is missing.
+# The bundled CLI (vendor/tilori-agent.js) runs under the first of
+# (UNI-770):
+#   1. bun, as before;
+#   2. node 22.18 or later (the first with both import.meta.main and ESM
+#      detection without a flag), with NODE_OPTIONS and NODE_PATH cleared,
+#      since either could load other code;
+#   3. the compiled tilori-agent-<os>-<arch> from the same tilori-agent
+#      release, pinned by sha256 in vendor/BINARIES (see fetch-agent.sh).
+# Never a tilori-agent found on PATH in its place.
+# Exits 127 (printing nothing on stdout) when the CLI or every runtime is
+# missing.
 #
 # No external command may run before `cd /`: with a "." or empty PATH entry a
 # project-local ./dirname or ./readlink would run first. So $0 is made
@@ -44,6 +54,31 @@ find_bun() {
   return 1
 }
 
+# node 22.18 or later, by absolute path; NODE_OPTIONS is cleared for the
+# version check too.
+find_node() {
+  old_ifs=$IFS; IFS=:
+  for d in $PATH; do
+    case "$d" in
+      /*) if [ -x "$d/node" ] && [ ! -d "$d/node" ]; then
+            IFS=$old_ifs
+            v=$(env -u NODE_OPTIONS -u NODE_PATH "$d/node" --version 2>/dev/null) || v=
+            if node_ok "$v"; then echo "$d/node"; return 0; fi
+            IFS=:
+          fi ;;
+    esac
+  done
+  IFS=$old_ifs
+  return 1
+}
+# node_ok v22.18.0: 0 for 22.18 or later.
+node_ok() {
+  v=${1#v}
+  major=${v%%.*}; rest=${v#*.}; minor=${rest%%.*}
+  case "$major$minor" in '' | *[!0-9]*) return 1 ;; esac
+  [ "$major" -gt 22 ] || { [ "$major" -eq 22 ] && [ "$minor" -ge 18 ]; }
+}
+
 # The bundled CLI (vendor/tilori-agent.js) and older tilori-agent installs
 # (src/cli.ts) run under Bun with --no-env-file, from /. Newer installs ship a
 # shell launcher (bin/tilori-agent) that does the same hardening and is
@@ -62,9 +97,23 @@ while [ -L "$real" ]; do
   esac
 done
 case "$real" in
-  *.ts|*.js)
+  *.ts)
     bun=$(find_bun) || { echo "tilori: bun not found (install Bun or put it on PATH)" >&2; exit 127; }
     exec "$bun" --no-env-file "$real" "$@"
+    ;;
+  *.js)
+    if bun=$(find_bun); then exec "$bun" --no-env-file "$real" "$@"; fi
+    if node=$(find_node); then
+      unset NODE_OPTIONS NODE_PATH
+      exec "$node" "$real" "$@"
+    fi
+    # Only the bundle this plugin ships has pinned binaries.
+    if [ "$real" = "${here%/*}/vendor/tilori-agent.js" ]; then
+      exe=$(/bin/sh "$here/fetch-agent.sh") || exit 127
+      exec "$exe" "$@"
+    fi
+    echo "tilori: neither bun nor node 22.18+ found (install one, or put it on PATH)" >&2
+    exit 127
     ;;
   *)
     exec "$real" "$@"

@@ -17,6 +17,8 @@
 #      is pinned below), it ran on the tag push for that commit and
 #      succeeded, and the release's tilori-agent.js.sha256 asset was
 #      uploaded by github-actions[bot] (that workflow, not a person);
+#   2b. when the release has compiled executables, release-binaries.yml at
+#      the tag is the reviewed one (pinned below) and its tag run succeeded;
 #   3. tools/bundle-agent.sh <tag> rebuilds vendor/;
 #   4. vendor/SOURCE, without its comment line, equals that asset;
 #   5. tools/bundle-agent.sh --verify;
@@ -25,7 +27,8 @@
 #   7. the full tests/check.sh (no skips).
 # Then it prints a summary for the PR. It never commits, pushes, tags,
 # comments or opens a PR: that stays with the author and the lead.
-# GH, BUNDLE, CHECK and WORKFLOW_SHA256 may be overridden for tests.
+# GH, BUNDLE, CHECK, WORKFLOW_SHA256 and BINARIES_WORKFLOW_SHA256 may be
+# overridden for tests.
 set -eu
 cd "$(dirname "$0")/.."
 repo=universal-market/tilori-agent
@@ -45,6 +48,11 @@ CHECK=${CHECK:-sh tests/check.sh}
 # reviewed. When that workflow changes, review it and update this pin.
 WORKFLOW_SHA256=${WORKFLOW_SHA256:-836aa43ce567e43dee2d16b1b8acd77c8ede640f36fbeffba21275427ea0bc2c}
 workflow=.github/workflows/release-hash.yml
+# sha256 of tilori-agent's .github/workflows/release-binaries.yml (the
+# compiled executables vendor/BINARIES pins, UNI-770) as last reviewed
+# (tilori-agent#90). When it changes, review it and update this pin.
+BINARIES_WORKFLOW_SHA256=${BINARIES_WORKFLOW_SHA256:-5de409807e733917c8ac8b1e4d25941809355fd367fda688aaa0ae9cdff2a5b8}
+bworkflow=.github/workflows/release-binaries.yml
 
 die() { echo "release: $*" >&2; exit 1; }
 usage() { echo "usage: sh tools/release.sh [--finish] <agent-tag vX.Y.Z> <plugin-version X.Y.Z>" >&2; exit 2; }
@@ -101,6 +109,23 @@ uploader=$($GH api "repos/$repo/releases/tags/$tag" --jq '.assets[] | select(.na
 [ "$uploader" = "github-actions[bot]" ] || die "tilori-agent.js.sha256 on $tag was uploaded by '${uploader:-nobody}', not github-actions[bot]"
 $GH release download "$tag" -R "$repo" -p tilori-agent.js.sha256 -D "$t" >/dev/null
 echo "uploaded by $uploader"
+
+# A release with compiled executables: bundle-agent.sh pins them in
+# vendor/BINARIES (checking each asset), so the workflow that built them must
+# be the reviewed one and its run on the tag push must have succeeded.
+has_bins=$($GH api "repos/$repo/releases/tags/$tag" --jq '[.assets[].name] | index("tilori-agent-linux-x64.sha256") != null')
+if [ "$has_bins" = true ]; then
+  echo "== 2b. release-binaries run"
+  $GH api -H 'Accept: application/vnd.github.raw' "repos/$repo/contents/$bworkflow?ref=refs/tags/$tag" > "$t/bworkflow"
+  bsha=$(sha256sum < "$t/bworkflow" 2>/dev/null || shasum -a 256 < "$t/bworkflow")
+  bsha=${bsha%% *}
+  [ "$bsha" = "$BINARIES_WORKFLOW_SHA256" ] || die "$bworkflow at $tag hashes to $bsha, not the reviewed $BINARIES_WORKFLOW_SHA256; review it and update the pin"
+  bruns=$($GH api "repos/$repo/actions/runs?head_sha=$commit&event=push" --jq "[.workflow_runs[] | select(.path == \"$bworkflow\" and .head_branch == \"$tag\" and .conclusion == \"success\")] | length")
+  [ "${bruns:-0}" -ge 1 ] 2>/dev/null || die "no successful $bworkflow run on the $tag push at $commit"
+  echo "binaries workflow is the reviewed one; its $tag run succeeded"
+else
+  echo "== 2b. no compiled binaries on $tag: none pinned, so the plugin needs bun or node there"
+fi
 
 if [ -z "$finish" ]; then
   echo "== 3. bundle"

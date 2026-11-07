@@ -162,6 +162,9 @@ printf 'console.log(`bundle cwd=${process.cwd()} args=${process.argv.slice(2).jo
 [ -f "$t/data/tilori-agent" ] || fail "launcher: not written"
 out=$(cd "$p" && env -i HOME="$h" PATH=".:$sys" sh "$t/data/tilori-agent" router 2>&1) || fail "launcher: exit $? ($out)"
 [ "$out" = "bundle cwd=/ args=router" ] || fail "launcher: $out"
+# It hands the binary cache (CLAUDE_PLUGIN_DATA) to run-agent.sh, for runs
+# from a terminal or a service (UNI-770).
+grep -qx "CLAUDE_PLUGIN_DATA=$t/data exec /bin/sh $scripts/run-agent.sh \"\$@\"" "$t/data/tilori-agent" || fail "launcher: no CLAUDE_PLUGIN_DATA: $(cat "$t/data/tilori-agent")"
 (cd "$p" && env -i HOME="$h" PATH=".:$sys" CLAUDE_PLUGIN_DATA=rel/data "$scripts/session-start.sh" >/dev/null 2>&1) || :
 [ ! -e "$p/rel" ] && [ ! -e "/rel" ] || fail "launcher: written to a relative CLAUDE_PLUGIN_DATA"
 ls -a "$t/data" | grep -q '^\.tilori-agent\.' && fail "launcher: temp file left behind"
