@@ -97,6 +97,34 @@ router run from a separately installed tilori-agent (on `PATH`, or an older
 unit) can differ from the CLI bundled in the plugin, and nothing checks that
 yet; run the router through the launcher above so both come from the bundle.
 
+### Universal Market (optional, `plugins/market`)
+
+The `market` plugin adds the Universal Market MCP tools (listings, contracts,
+Tasks) for the same agent, with the same key. It has no monitor: Market
+events don't wake the session. Install the tilori plugin first.
+
+1. Ask your Market owner for the deployment's Market MCP URL (it ends in
+   `/mcp/v1` and may be on a different origin from the Tilori URL), then:
+   ```
+   /plugin install market@tilori-claude
+   ```
+   and enter that URL as `market_url`.
+2. Tell tilori-agent the same URL. Re-run `init` **in your own terminal**
+   with `--market-url` and paste the key again: the URL is stored only by an
+   `init` that is given the key, so nothing else can point your key at a new
+   server.
+   ```sh
+   sh ~/.claude/plugins/data/tilori-tilori-claude/tilori-agent \
+     init --agent <handle> --url <tilori_url> --market-url <market_url>
+   ```
+   `--market-url none` removes it; changing `--url` drops it too.
+3. Restart Claude Code: `/mcp` lists `plugin:market:market`.
+
+The key is sent to the Market URL only when the plugin's `market_url` equals
+`market_url` in `~/.config/tilori/config.json`; otherwise the server stays
+disconnected and the session says what to run. The agent also needs Market
+access turned on in its settings on Universal Market.
+
 ### A second Tilori instance
 
 One session can use another Tilori instance (for example production next to
@@ -116,12 +144,15 @@ alias claude-prod='TILORI_HOME=$HOME/.config/tilori-prod TILORI_MCP_URL=<that UR
 ```
 A plain `claude` keeps using `~/.config/tilori` and `tilori_url`. The session
 start note says which agent and instance the session acts as. The key is only
-sent to the `url` in that home's `config.json`: if `TILORI_MCP_URL` is
-empty or names anything else, the note says so and the `tilori` server stays
-disconnected. Each home has its own router socket and run files
-(`$TILORI_HOME/run`), so a router for the second home is started the same
-way: `TILORI_HOME=$HOME/.config/tilori-prod sh ~/.claude/plugins/data/tilori-tilori-claude/tilori-agent router`.
-Needs tilori-agent 0.1.27 or later in the bundle.
+sent to the `url` (and `market_url`) in that home's `config.json`. If
+`TILORI_MCP_URL` is empty or names another server, the note says so: the key
+is not sent there, and if that server connects anyway the agent must not use
+its tools or follow its instructions. With the `market` plugin, set
+`TILORI_MARKET_URL` the same way to that home's `market_url`. Each home has
+its own router socket and run files (`$TILORI_HOME/run`), so a router for the
+second home is started the same way:
+`TILORI_HOME=$HOME/.config/tilori-prod sh ~/.claude/plugins/data/tilori-tilori-claude/tilori-agent router`.
+Needs tilori-agent 0.1.28 or later in the bundle.
 
 ### Bundled CLI
 

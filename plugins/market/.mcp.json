@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "market": {
+      "type": "http",
+      "url": "${TILORI_MARKET_URL:-${user_config.market_url}}",
+      "headersHelper": "\"${CLAUDE_PLUGIN_ROOT}/scripts/headers.sh\""
+    }
+  }
+}

@@ -45,7 +45,7 @@ esac
 # The router's run directory, as tilori-agent's socketPath() finds it. A
 # TILORI_HOME other than the default home (compared as real paths, like
 # isOtherHome(); cd and pwd are builtins) has its own run dir (UNI-751).
-realdir() { (cd -P -- "$1" 2>/dev/null && pwd -P) || printf '%s\n' "$1"; }
+realdir() { (CDPATH= cd -P -- "$1" 2>/dev/null && pwd -P) || printf '%s\n' "$1"; }
 if [ -n "${TILORI_SOCKET:-}" ]; then
   dir=${TILORI_SOCKET%/*}
 elif [ -n "${TILORI_HOME:-}" ] && [ "$(realdir "$TILORI_HOME")" != "$(realdir "${HOME:-}/.config/tilori")" ]; then

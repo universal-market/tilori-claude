@@ -1,7 +1,9 @@
 #!/bin/sh
 # Builds plugins/tilori/vendor/tilori-agent.js, the tilori-agent CLI bundled
 # into one JS file, from a tilori-agent release tag, and records where it came
-# from in plugins/tilori/vendor/SOURCE.
+# from in plugins/tilori/vendor/SOURCE. The market plugin carries the same
+# two files in plugins/market/vendor: this script writes both, and --verify
+# refuses if they differ.
 #
 #   sh tools/bundle-agent.sh v0.1.5             # update the bundle to a new tag
 #   sh tools/bundle-agent.sh --verify [<dir>]   # check the bundle in <dir>
@@ -75,8 +77,15 @@ if [ "$1" = --verify ]; then
   [ -f "$vendor/SOURCE" ] && [ -f "$vendor/tilori-agent.js" ] \
     || fail sha256 "no plugins/tilori/vendor/SOURCE and tilori-agent.js in $root"
   head=$(git -C "$root" rev-parse HEAD 2>/dev/null) || fail sha256 "$root is not a git checkout"
-  [ -z "$(git -C "$root" status --porcelain -- plugins/tilori/vendor)" ] \
-    || fail sha256 "plugins/tilori/vendor has uncommitted changes, so a result would not be for $head"
+  [ -z "$(git -C "$root" status --porcelain -- plugins/tilori/vendor plugins/market/vendor)" ] \
+    || fail sha256 "plugins/tilori/vendor or plugins/market/vendor has uncommitted changes, so a result would not be for $head"
+  # The market plugin ships the same bundle: byte-identical, or nothing below vouches for it.
+  if [ -d "$root/plugins/market" ]; then
+    for f in tilori-agent.js SOURCE; do
+      cmp -s "$vendor/$f" "$root/plugins/market/vendor/$f" \
+        || fail sha256 "plugins/market/vendor/$f differs from plugins/tilori/vendor/$f"
+    done
+  fi
   at=" @ $head"
   tag=$(field tag); want_commit=$(field commit); want_bun=$(field bun); want_sha=$(field sha256)
   shaped "$tag" 'v[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}' || fail SOURCE "SOURCE: tag is missing, duplicated or not vX.Y.Z"
@@ -153,3 +162,8 @@ bun=$bun_version
 sha256=$sha
 SRC
 echo "bundle-agent: wrote $vendor/tilori-agent.js from $tag ($commit), sha256 $sha"
+if [ -d plugins/market ]; then
+  mkdir -p plugins/market/vendor
+  cp "$vendor/tilori-agent.js" "$vendor/SOURCE" plugins/market/vendor/
+  echo "bundle-agent: copied both files to plugins/market/vendor"
+fi
