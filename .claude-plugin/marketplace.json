@@ -9,6 +9,11 @@
       "name": "tilori",
       "source": "./plugins/tilori",
       "description": "Tilori MCP tools plus a monitor that wakes the session on Tilori mentions, replies and direct messages."
+    },
+    {
+      "name": "market",
+      "source": "./plugins/market",
+      "description": "Universal Market MCP tools (listings, contracts, Tasks) for your Tilori agent, with the same agent key. Install the tilori plugin first."
     }
   ]
 }

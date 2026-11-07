@@ -20,7 +20,8 @@
 #   3. tools/bundle-agent.sh <tag> rebuilds vendor/;
 #   4. vendor/SOURCE, without its comment line, equals that asset;
 #   5. tools/bundle-agent.sh --verify;
-#   6. plugin.json gets <plugin-version>, which must be higher;
+#   6. plugin.json (and the market plugin's, which must match it) gets
+#      <plugin-version>, which must be higher;
 #   7. the full tests/check.sh (no skips).
 # Then it prints a summary for the PR. It never commits, pushes, tags,
 # comments or opens a PR: that stays with the author and the lead.
@@ -30,6 +31,10 @@ cd "$(dirname "$0")/.."
 repo=universal-market/tilori-agent
 vendor=plugins/tilori/vendor
 manifest=plugins/tilori/.claude-plugin/plugin.json
+# The market plugin, when present, ships the same bundle and moves to the
+# same version with it.
+market=plugins/market/.claude-plugin/plugin.json
+[ -f "$market" ] || market=
 GH=${GH:-gh}
 BUNDLE=${BUNDLE:-sh tools/bundle-agent.sh}
 CHECK=${CHECK:-sh tests/check.sh}
@@ -60,8 +65,12 @@ semver "$version" || usage
 current=$(sed -n 's/^  "version": "\(.*\)",$/\1/p' "$manifest")
 semver "$current" || die "can't read the current version from $manifest"
 newer "$version" "$current" || die "plugin version $version is not higher than $current"
+if [ -n "$market" ]; then
+  mcurrent=$(sed -n 's/^  "version": "\(.*\)",$/\1/p' "$market")
+  [ "$mcurrent" = "$current" ] || die "$market says ${mcurrent:-no version}, $manifest says $current; they move together"
+fi
 if [ -n "$(git status --porcelain)" ]; then
-  [ -n "$finish" ] && die "the working tree has changes; commit plugins/tilori/vendor (and nothing else) before --finish"
+  [ -n "$finish" ] && die "the working tree has changes; commit plugins/tilori/vendor${market:+ and plugins/market/vendor} (and nothing else) before --finish"
   die "the working tree has changes; start from a clean branch"
 fi
 [ "$(git branch --show-current)" != main ] || die "on main; make a branch first"
@@ -108,7 +117,7 @@ if [ -z "$finish" ]; then
   cat <<NEXT
 
 release: bundle written and matches the release asset. Commit it, then finish:
-  git add plugins/tilori/vendor && git commit -m "Bundle tilori-agent $tag"
+  git add plugins/tilori/vendor${market:+ plugins/market/vendor} && git commit -m "Bundle tilori-agent $tag"
   sh tools/release.sh --finish $tag $version
 NEXT
   exit 0
@@ -120,7 +129,12 @@ $BUNDLE --verify
 echo "== 6. version $current -> $version"
 sed "s/^  \"version\": \"$current\",\$/  \"version\": \"$version\",/" "$manifest" > "$t/plugin.json"
 grep -q "^  \"version\": \"$version\",\$" "$t/plugin.json" || die "couldn't set the version in $manifest"
+if [ -n "$market" ]; then
+  sed "s/^  \"version\": \"$current\",\$/  \"version\": \"$version\",/" "$market" > "$t/market.json"
+  grep -q "^  \"version\": \"$version\",\$" "$t/market.json" || die "couldn't set the version in $market"
+fi
 cat "$t/plugin.json" > "$manifest"
+[ -z "$market" ] || cat "$t/market.json" > "$market"
 
 echo "== 7. checks"
 $CHECK
@@ -129,6 +143,6 @@ cat <<SUMMARY
 
 release: ready to commit. For the PR body:
 - Bundle: tilori-agent $tag at \`$(printf '%.7s' "$commit")\`, on main, with \`src/version.ts\` = ${tag#v}. \`$workflow\` at the tag is the reviewed one (sha256 \`$(printf '%.8s' "$WORKFLOW_SHA256")…\`) and its run on the tag push succeeded. \`vendor/SOURCE\` minus its comment line is identical to the release's \`tilori-agent.js.sha256\` asset (uploaded by github-actions[bot]): sha256 \`$sha\`. \`bundle-agent.sh --verify\` matches a rebuild.
-- Version: plugin.json $current -> $version.
+- Version: plugin.json $current -> $version${market:+ (tilori and market)}.
 - \`tests/check.sh\` passes (rebuild included).
 SUMMARY
