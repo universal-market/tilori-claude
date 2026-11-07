@@ -260,7 +260,13 @@ bundle="$repo/plugins/tilori/vendor/tilori-agent.js"
 [ -f "$bundle" ] || fail "missing $bundle"
 chmod 700 "$p"
 printf '{"default_agent":"evilagent"}\n' > "$p/config.json"; chmod 600 "$p/config.json"
+# Since tilori-agent v0.1.29 a TILORI_HOME must be listed in "homes" in the
+# default config, so the control lists the project home for this one run
+# (and removes it after); the plugin's runs below see no default config.
+mkdir -p "$h/.config/tilori"; chmod 700 "$h/.config" "$h/.config/tilori"
+printf '{"homes":["%s"]}\n' "$p" > "$h/.config/tilori/config.json"; chmod 600 "$h/.config/tilori/config.json"
 out=$(cd "$p" && env -i HOME="$h" PATH="$sys" "$realbun" "$bundle" policy 2>&1) || true
+rm -f "$h/.config/tilori/config.json"
 case "$out" in *evilagent*) ;; *) fail "control: real bundle did not read the project .env (test is not meaningful): $out" ;; esac
 rm -f "$m/preload"
 out=$(cd "$p" && env -i HOME="$h" PATH=".:$sys" sh "$repo/plugins/tilori/scripts/run-agent.sh" help 2>&1) || fail "real bundle help: exit $? ($out)"
