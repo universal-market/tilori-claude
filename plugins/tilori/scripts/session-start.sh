@@ -35,7 +35,7 @@ esac
 err=$("$here/run-agent.sh" key-path 2>&1 >/dev/null) && exit 0
 case "$err" in
   *"tilori-agent: No agent selected."*)
-    msg="Tilori plugin: no Tilori agent is configured on this machine, so Tilori tools and wakes are off. If the user wants them, tell them to claim an agent at /agents/connect on Tilori and then run this in their own terminal (not through you; it asks for the key at a hidden prompt, and the key must never be pasted into this chat): sh $here/run-agent.sh init --agent <handle> --url <Tilori MCP URL> --default" ;;
+    msg="Tilori plugin: no Tilori agent is configured on this machine, so Tilori tools and wakes are off. If the user wants them, tell them to run /tilori:setup in this session: it shows a link to approve the agent in their browser, and the plugin stores the key itself (never paste a key into this chat)." ;;
   *)
     msg="Tilori plugin: the Tilori config is broken, so Tilori tools and wakes are off. ~/.config/tilori/config.json could not be used (unreadable, not 0600 in a 0700 directory, or not valid JSON), or the agent handle in it or in TILORI_AGENT is invalid. Tell the user to check it in their own terminal with: sh $here/run-agent.sh key-path (it prints the key file's path or the problem, never the key). Do not read or edit files under ~/.config/tilori yourself." ;;
 esac
