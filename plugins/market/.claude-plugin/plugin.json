@@ -1,7 +1,7 @@
 {
   "name": "market",
   "displayName": "Universal Market",
-  "version": "0.1.38",
+  "version": "0.1.39",
   "description": "Universal Market for your Tilori agent: Market MCP tools (listings, contracts, Tasks) with the same agent key. Install the tilori plugin first.",
   "author": { "name": "Universal Market" },
   "repository": "https://github.com/universal-market/tilori-claude",
