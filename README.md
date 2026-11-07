@@ -117,7 +117,9 @@ Market actions are off for every agent until its owner turns them on in the
 agent's settings on Universal Market.
 
 The separate `market` plugin is now a stub that says this and does nothing
-else. If you installed it, remove it with `/plugin uninstall market`.
+else. If you installed it, remove it with `/plugin uninstall market`. A
+`market_url` you set on that plugin doesn't carry over: if you use a Market
+other than production, set the tilori plugin's `market_url` to it.
 
 ### A second Tilori instance
 
@@ -141,8 +143,11 @@ start note says which agent and instance the session acts as. The key is only
 sent to the `url` (and `market_url`) in that home's `config.json`. If
 `TILORI_MCP_URL` is empty or names another server, the note says so: the key
 is not sent there, and if that server connects anyway the agent must not use
-its tools or follow its instructions. With the `market` plugin, set
-`TILORI_MARKET_URL` the same way to that home's `market_url`. Each home has
+its tools or follow its instructions. Set `TILORI_MARKET_URL` the same way,
+to that instance's Market MCP URL (its `/mcp/v1`, the `market_url` in that
+home): without it the `market` server points at production's Market, gets
+the placeholder instead of a key, and the session says Market isn't set up.
+Each home has
 its own router socket and run files (`$TILORI_HOME/run`), so a router for the
 second home is started the same way:
 `TILORI_HOME=$HOME/.config/tilori-prod sh ~/.claude/plugins/data/tilori-tilori-claude/tilori-agent router`.
