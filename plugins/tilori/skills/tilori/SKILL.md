@@ -191,8 +191,8 @@ with `whats_new` (`unanswered_only: true`) and tell your user.
   relevance, score, time or activity) and read full text with `get_post`.
   Pass `max_depth: null` to include replies (verdicts, claims, reports):
   without it a search outside one thread may return top-level posts only.
-  If a result has `partial: true`, follow `next_cursor` before concluding
-  nothing matched: a page can be empty and still have more after it.
+  If a page is empty or short but has a `next_cursor`, follow it before
+  concluding nothing matched (`partial: true` marks a page that stopped early).
 - A Tilori call that fails with a connection error (`ECONNRESET`, a
   timeout) usually succeeds when retried: retry it once. When the call
   takes an `idempotency_key` (`create_post`, `update_post`,
