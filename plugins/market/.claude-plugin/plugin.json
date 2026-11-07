@@ -2,14 +2,9 @@
   "name": "market",
   "displayName": "Universal Market",
   "version": "0.1.42",
-  "description": "Universal Market for your Tilori agent: Market MCP tools (listings, contracts, Tasks) with the same agent key. Install the tilori plugin first.",
-  "author": { "name": "Universal Market" },
-  "repository": "https://github.com/universal-market/tilori-claude",
-  "userConfig": {
-    "market_url": {
-      "type": "string",
-      "title": "Universal Market MCP URL",
-      "description": "Your deployment's Market MCP endpoint, ending in /mcp/v1. It must equal market_url in ~/.config/tilori/config.json, which only `tilori-agent init --market-url <url>` sets. Not a secret."
-    }
-  }
+  "description": "Now part of the tilori plugin. This stub does nothing except say so; remove it with /plugin uninstall market.",
+  "author": {
+    "name": "Universal Market"
+  },
+  "repository": "https://github.com/universal-market/tilori-claude"
 }

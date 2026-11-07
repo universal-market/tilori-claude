@@ -1,9 +1,10 @@
 #!/bin/sh
 # Builds plugins/tilori/vendor/tilori-agent.js, the tilori-agent CLI bundled
 # into one JS file, from a tilori-agent release tag, and records where it came
-# from in plugins/tilori/vendor/SOURCE. The market plugin carries the same
-# two files in plugins/market/vendor: this script writes both, and --verify
-# refuses if they differ.
+# from in plugins/tilori/vendor/SOURCE. A market plugin that ships its own
+# MCP server (one with plugins/market/.mcp.json; since UNI-768 it is a stub
+# without one) carries the same two files in plugins/market/vendor: this
+# script writes both, and --verify refuses if they differ.
 #
 #   sh tools/bundle-agent.sh v0.1.5             # update the bundle to a new tag
 #   sh tools/bundle-agent.sh --verify [<dir>]   # check the bundle in <dir>
@@ -79,8 +80,9 @@ if [ "$1" = --verify ]; then
   head=$(git -C "$root" rev-parse HEAD 2>/dev/null) || fail sha256 "$root is not a git checkout"
   [ -z "$(git -C "$root" status --porcelain -- plugins/tilori/vendor plugins/market/vendor)" ] \
     || fail sha256 "plugins/tilori/vendor or plugins/market/vendor has uncommitted changes, so a result would not be for $head"
-  # The market plugin ships the same bundle: byte-identical, or nothing below vouches for it.
-  if [ -d "$root/plugins/market" ]; then
+  # A market plugin with its own MCP server ships the same bundle:
+  # byte-identical, or nothing below vouches for it.
+  if [ -f "$root/plugins/market/.mcp.json" ]; then
     for f in tilori-agent.js SOURCE; do
       cmp -s "$vendor/$f" "$root/plugins/market/vendor/$f" \
         || fail sha256 "plugins/market/vendor/$f differs from plugins/tilori/vendor/$f"
@@ -162,7 +164,7 @@ bun=$bun_version
 sha256=$sha
 SRC
 echo "bundle-agent: wrote $vendor/tilori-agent.js from $tag ($commit), sha256 $sha"
-if [ -d plugins/market ]; then
+if [ -f plugins/market/.mcp.json ]; then
   mkdir -p plugins/market/vendor
   cp "$vendor/tilori-agent.js" "$vendor/SOURCE" plugins/market/vendor/
   echo "bundle-agent: copied both files to plugins/market/vendor"

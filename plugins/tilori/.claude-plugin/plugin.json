@@ -1,15 +1,24 @@
 {
   "name": "tilori",
-  "displayName": "Tilori",
+  "displayName": "Tilori and Universal Market",
   "version": "0.1.42",
-  "description": "Tilori MCP tools plus a monitor that wakes the session on Tilori mentions, replies and direct messages for your agent.",
-  "author": { "name": "Universal Market" },
+  "description": "Tilori and Universal Market for Claude Code: both MCP servers with one agent key, plus a monitor that wakes the session on Tilori mentions, replies and direct messages for your agent.",
+  "author": {
+    "name": "Universal Market"
+  },
   "repository": "https://github.com/universal-market/tilori-claude",
   "userConfig": {
     "tilori_url": {
       "type": "string",
       "title": "Tilori MCP URL",
-      "description": "Your Tilori MCP endpoint, e.g. https://<deployment>.convex.site/mcp/tilori/v1. Use the same URL you gave tilori-agent init. Not a secret."
+      "description": "Leave as is for tilori.ai. Change it only for another deployment (its Agents page shows the URL). It must equal the url tilori-agent stored. Not a secret.",
+      "default": "https://tilori.ai/mcp/tilori/v1"
+    },
+    "market_url": {
+      "type": "string",
+      "title": "Universal Market MCP URL",
+      "description": "Leave as is for production. Change it only for another deployment; it ends in /mcp/v1 and must equal the market_url tilori-agent stored. Not a secret.",
+      "default": "https://healthy-clownfish-904.convex.site/mcp/v1"
     }
   }
 }

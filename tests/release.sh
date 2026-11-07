@@ -121,13 +121,14 @@ echo dirty > "$t/r/x"
 if out=$(cd "$t/r" && GH=false sh tools/release.sh v0.1.11 0.1.15 2>&1); then fail "dirty tree accepted"; fi
 case "$out" in *"working tree has changes"*) ;; *) fail "dirty message: $out" ;; esac
 # The market plugin moves with the tilori plugin (UNI-748): same version, both bumped.
-market() { # its version
+market() { # its version, then "mcp" for a market plugin with its own MCP server
   mkdir -p "$t/r/plugins/market/.claude-plugin" "$t/r/plugins/market/vendor"
   printf '{\n  "name": "market",\n  "version": "%s",\n  "y": 2\n}\n' "$1" > "$t/r/plugins/market/.claude-plugin/plugin.json"
+  [ "${2:-}" != mcp ] || echo '{}' > "$t/r/plugins/market/.mcp.json"
   (cd "$t/r" && git -c user.name=t -c user.email=t@t add -A && git -c user.name=t -c user.email=t@t commit -qm market)
 }
 mversion() { sed -n 's/^  "version": "\(.*\)",$/\1/p' "$t/r/plugins/market/.claude-plugin/plugin.json"; }
-setup; market 0.1.14
+setup; market 0.1.14 mcp
 out=$(run) || fail "market: part 1: $out"
 case "$out" in *"git add plugins/tilori/vendor plugins/market/vendor"*) ;; *) fail "market: commit hint: $out" ;; esac
 commit_vendor
@@ -135,6 +136,14 @@ out=$(finish) || fail "market: --finish: $out"
 case "$out" in *"0.1.14 -> 0.1.15 (tilori and market)"*) ;; *) fail "market: summary: $out" ;; esac
 [ "$(version)" = 0.1.15 ] && [ "$(mversion)" = 0.1.15 ] || fail "market: versions $(version) / $(mversion)"
 grep -q '"y": 2' "$t/r/plugins/market/.claude-plugin/plugin.json" || fail "market plugin.json lost other fields"
+# The stub (UNI-768): no .mcp.json, so no bundle copy, but the same version.
+setup; market 0.1.14
+out=$(run) || fail "stub: part 1: $out"
+case "$out" in *"git add plugins/tilori/vendor && git commit"*) ;; *) fail "stub: commit hint: $out" ;; esac
+commit_vendor
+out=$(finish) || fail "stub: --finish: $out"
+case "$out" in *"0.1.14 -> 0.1.15 (tilori and market)"*) ;; *) fail "stub: summary: $out" ;; esac
+[ "$(version)" = 0.1.15 ] && [ "$(mversion)" = 0.1.15 ] || fail "stub: versions $(version) / $(mversion)"
 setup; market 0.1.13
 if out=$(run); then fail "market: version mismatch accepted: $out"; fi
 case "$out" in *"they move together"*) ;; *) fail "market: mismatch message: $out" ;; esac
