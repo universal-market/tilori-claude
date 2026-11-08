@@ -16,7 +16,7 @@ for d in /usr/bin /bin; do
   for f in "$d"/*; do
     n=${f##*/}
     case "$n" in bun | node | nodejs) continue ;; esac
-    [ -e "$t/tools/$n" ] || ln -s "$f" "$t/tools/$n"
+    [ -e "$t/tools/$n" ] || [ -L "$t/tools/$n" ] || ln -s "$f" "$t/tools/$n"
   done
 done
 BASE="$t/tools"

@@ -33,6 +33,9 @@ esac
 # "No agent selected." only in the first case. Its stderr is matched, never
 # shown. If key-path succeeds, policy's silence is unexplained: no hint.
 err=$("$here/run-agent.sh" key-path 2>&1 >/dev/null) && exit 0
+# The hint names /tilori:setup and no URL or command line, so nothing from
+# the session's env or plugin options (a project can set either) reaches it
+# (UNI-773, Bastion b7ad41ff; tests/hostile-cwd.sh pins it).
 case "$err" in
   *"tilori-agent: No agent selected."*)
     msg="Tilori plugin: no Tilori agent is configured on this machine, so Tilori tools and wakes are off. If the user wants them, tell them to run /tilori:setup in this session: it shows a link to approve the agent in their browser, and the plugin stores the key itself (never paste a key into this chat)." ;;
