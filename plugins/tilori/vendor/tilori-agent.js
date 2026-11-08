@@ -6977,17 +6977,17 @@ var require_dist = __commonJS(function(exports, module) {
 
 // src/cli.ts
 import { spawn as spawn2 } from "child_process";
-import { existsSync as existsSync4, readdirSync } from "fs";
+import { existsSync as existsSync4, readdirSync as readdirSync2 } from "fs";
 import { join as join5 } from "path";
 
 // src/activity.ts
 import { closeSync, constants, futimesSync, lstatSync as lstatSync3, openSync, readFileSync as readFileSync3, writeSync } from "fs";
-import { dirname as dirname2, join as join4 } from "path";
+import { dirname as dirname3, join as join4 } from "path";
 
 // src/ipc.ts
 import { existsSync as existsSync3, lstatSync as lstatSync2, chmodSync as chmodSync2, unlinkSync } from "fs";
 import { createConnection, createServer } from "net";
-import { dirname, join as join3 } from "path";
+import { dirname as dirname2, join as join3 } from "path";
 import { randomUUID } from "crypto";
 
 // src/keys.ts
@@ -7139,11 +7139,11 @@ function redact(text, secrets = []) {
 }
 
 // src/config.ts
-import { existsSync as existsSync2, readFileSync as readFileSync2, renameSync as renameSync2, writeFileSync as writeFileSync2 } from "fs";
-import { join as join2 } from "path";
+import { existsSync as existsSync2, readdirSync, readFileSync as readFileSync2, renameSync as renameSync2, writeFileSync as writeFileSync2 } from "fs";
+import { dirname, join as join2 } from "path";
 
 // src/version.ts
-var VERSION = "0.1.30";
+var VERSION = "0.1.31";
 
 // src/config.ts
 var DEFAULT_WAKES_PER_HOUR = 20;
@@ -7299,6 +7299,54 @@ function saveConfig(config, path = configPath()) {
   const tmp = `${path}.${process.pid}.tmp`;
   writeFileSync2(tmp, JSON.stringify(config, null, 2) + `
 `, { mode: 384, flag: "wx" });
+  renameSync2(tmp, path);
+  writeHeadersAllow(config, dirname(path));
+}
+var HEADERS_ALLOW = "headers.allow";
+function headersAllowText(config, agents) {
+  const urls = new Set;
+  const add = (raw, norm) => {
+    if (!raw)
+      return;
+    let href;
+    try {
+      href = norm(raw).href;
+    } catch {
+      return;
+    }
+    for (const u of [raw, href])
+      if (/^https?:\/\/[^\s]+$/.test(u) && released(u))
+        urls.add(u);
+  };
+  const released = (u) => {
+    try {
+      return releasedEndpoint(config, u) !== null;
+    } catch {
+      return false;
+    }
+  };
+  add(config.url, buildMcpUrl);
+  add(config.market_url, buildMarketUrl);
+  const lines = [];
+  const def = config.default_agent?.trim().toLowerCase();
+  if (def && HANDLE_RE.test(def))
+    lines.push(`default ${def}`);
+  for (const a of [...agents].sort())
+    for (const u of urls)
+      lines.push(`${a} ${u}`);
+  return lines.join(`
+`) + (lines.length ? `
+` : "");
+}
+function writeHeadersAllow(config, home) {
+  const dir = join2(home, "agents");
+  let agents = [];
+  if (existsSync2(dir)) {
+    agents = readdirSync(dir).filter((f) => f.endsWith(".key")).map((f) => f.slice(0, -".key".length)).filter((h) => HANDLE_RE.test(h));
+  }
+  const path = join2(home, HEADERS_ALLOW);
+  const tmp = `${path}.${process.pid}.tmp`;
+  writeFileSync2(tmp, headersAllowText(config, agents), { mode: 384, flag: "wx" });
   renameSync2(tmp, path);
 }
 function resolveAgent(config, explicit) {
@@ -7731,7 +7779,7 @@ function socketPath() {
   return runtime ? join3(runtime, "tilori", "router.sock") : join3(tiloriHome(), "run", "router.sock");
 }
 function assertOwnedSocket(path) {
-  assertPrivate(dirname(path), true);
+  assertPrivate(dirname2(path), true);
   const st = lstatSync2(path);
   if (!st.isSocket())
     throw new Error(`${path} is not a socket.`);
@@ -7803,7 +7851,7 @@ class RemoteInjector {
   }
 }
 async function serveRouter(router, path = socketPath(), log = () => {}) {
-  ensurePrivateDir(dirname(path));
+  ensurePrivateDir(dirname2(path));
   if (existsSync3(path)) {
     assertOwnedSocket(path);
     const live = await new Promise((resolve) => {
@@ -7980,7 +8028,7 @@ function routerUsage(agent, path = socketPath()) {
 var DEFAULT_STALL_MINUTES = 10;
 var MAX_STALL_MINUTES = 1440;
 function activityDir() {
-  return dirname2(socketPath());
+  return dirname3(socketPath());
 }
 function touchSignal(dir, kind, handle) {
   const path = join4(dir, `${kind}-${validateHandle(handle)}`);
@@ -19935,7 +19983,7 @@ class Router {
 
 // src/settings.ts
 import { watch } from "fs";
-import { basename, dirname as dirname3 } from "path";
+import { basename, dirname as dirname4 } from "path";
 var MAX_SET_WAKES = 60;
 var MAX_SET_DIRECT = 30;
 var MAX_REMINDER_MINUTES = 1440;
@@ -20119,7 +20167,7 @@ function followConfig(router, log, signal, path = configPath(), debounceMs = 500
   };
   let watcher;
   try {
-    watcher = watch(dirname3(path), (_event, name) => {
+    watcher = watch(dirname4(path), (_event, name) => {
       if (name && name !== basename(path))
         return;
       clearTimeout(timer);
@@ -20766,7 +20814,7 @@ function agentsWithKeys() {
   const dir = join5(tiloriHome(), "agents");
   if (!existsSync4(dir))
     return [];
-  return readdirSync(dir).filter((f) => f.endsWith(".key")).map((f) => f.slice(0, -4)).filter((h) => {
+  return readdirSync2(dir).filter((f) => f.endsWith(".key")).map((f) => f.slice(0, -4)).filter((h) => {
     try {
       validateHandle(h);
       return true;
