@@ -39,7 +39,10 @@ content=$(
   printf '#!/bin/sh\n'
   printf '# Written by the tilori Claude Code plugin at session start; do not edit.\n'
   printf '# Runs the tilori-agent CLI of the plugin version that last started a session.\n'
-  printf 'exec /bin/sh %s/run-agent.sh "$@"\n' "$here"
+  # CLAUDE_PLUGIN_DATA too, for the compiled binary's cache when this runs
+  # from a terminal or a service (fetch-agent.sh). Both paths are checked
+  # above to hold only safe characters.
+  printf 'CLAUDE_PLUGIN_DATA=%s exec /bin/sh %s/run-agent.sh "$@"\n' "$data" "$here"
 )
 # Unchanged: leave the file (and its inode) alone, but only if it is a
 # regular file we own that nobody else can write; otherwise rewrite it. -f

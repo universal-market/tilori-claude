@@ -29,7 +29,10 @@ case "\$*" in
   *commits/refs/tags/v0.1.11*) echo "\${STUB_COMMIT:-$C}" ;;
   *contents/src/version.ts?ref=refs/tags/v0.1.11*) printf '%s\n' "\${STUB_VERSION_TS-export const VERSION = '0.1.11';}" ;;
   *contents/.github/workflows/release-hash.yml?ref=refs/tags/v0.1.11*) printf '%s' "\${STUB_WORKFLOW:-reviewed}" ;;
+  *contents/.github/workflows/release-binaries.yml?ref=refs/tags/v0.1.11*) printf '%s' "\${STUB_BWORKFLOW:-reviewed-bins}" ;;
+  *actions/runs?head_sha=$C*release-binaries*) echo "\${STUB_BRUNS-1}" ;;
   *actions/runs?head_sha=$C*) echo "\${STUB_RUNS-1}" ;;
+  *releases/tags/*index*) echo "\${STUB_HAS_BINS:-false}" ;;
   *compare/*) echo "\${STUB_STATUS:-behind}" ;;
   *releases/tags/*) echo "\${STUB_UPLOADER-github-actions[bot]}" ;;
   "release download"*) while [ \$# -gt 0 ]; do [ "\$1" = -D ] && d=\$2; shift; done; printf '%s\n' "\$ASSET" > "\$d/tilori-agent.js.sha256" ;;
@@ -49,8 +52,9 @@ SH
 }
 # sha256 of the stub's default workflow text, "reviewed".
 PIN=$(printf reviewed | { sha256sum 2>/dev/null || shasum -a 256; }); PIN=${PIN%% *}
-run() { (cd "$t/r" && env ASSET="$ASSET" GH="$t/gh" BUNDLE="$t/bundle" CHECK="${CHECK:-true}" WORKFLOW_SHA256="$PIN" "$@" sh tools/release.sh v0.1.11 0.1.15 2>&1); }
-finish() { (cd "$t/r" && env ASSET="$ASSET" GH="$t/gh" BUNDLE="$t/bundle" CHECK="${CHECK:-true}" WORKFLOW_SHA256="$PIN" "$@" sh tools/release.sh --finish v0.1.11 0.1.15 2>&1); }
+BPIN=$(printf reviewed-bins | { sha256sum 2>/dev/null || shasum -a 256; }); BPIN=${BPIN%% *}
+run() { (cd "$t/r" && env ASSET="$ASSET" GH="$t/gh" BUNDLE="$t/bundle" CHECK="${CHECK:-true}" WORKFLOW_SHA256="$PIN" BINARIES_WORKFLOW_SHA256="$BPIN" "$@" sh tools/release.sh v0.1.11 0.1.15 2>&1); }
+finish() { (cd "$t/r" && env ASSET="$ASSET" GH="$t/gh" BUNDLE="$t/bundle" CHECK="${CHECK:-true}" WORKFLOW_SHA256="$PIN" BINARIES_WORKFLOW_SHA256="$BPIN" "$@" sh tools/release.sh --finish v0.1.11 0.1.15 2>&1); }
 commit_vendor() { (cd "$t/r" && git -c user.name=t -c user.email=t@t add plugins/tilori/vendor && git -c user.name=t -c user.email=t@t commit -qm bundle); }
 version() { sed -n 's/^  "version": "\(.*\)",$/\1/p' "$t/r/plugins/tilori/.claude-plugin/plugin.json"; }
 
@@ -148,4 +152,14 @@ setup; market 0.1.13
 if out=$(run); then fail "market: version mismatch accepted: $out"; fi
 case "$out" in *"they move together"*) ;; *) fail "market: mismatch message: $out" ;; esac
 [ "$(version)" = 0.1.14 ] && [ "$(mversion)" = 0.1.13 ] || fail "market: a refused run changed a version"
+# Compiled binaries (UNI-770): their workflow is pinned too, when the
+# release has them.
+setup; out=$(run) || fail "no binaries: $out"
+case "$out" in *"no compiled binaries on v0.1.11"*) ;; *) fail "no binaries line: $out" ;; esac
+setup; out=$(run STUB_HAS_BINS=true) || fail "binaries: $out"
+case "$out" in *"binaries workflow is the reviewed one; its v0.1.11 run succeeded"*) ;; *) fail "binaries line: $out" ;; esac
+refuse "binaries workflow changed" "release-binaries.yml at v0.1.11 hashes to" STUB_HAS_BINS=true STUB_BWORKFLOW=edited
+refuse "no binaries run" "no successful .github/workflows/release-binaries.yml run" STUB_HAS_BINS=true STUB_BRUNS=0
+# The real pin is tilori-agent#90's workflow.
+grep -q '^BINARIES_WORKFLOW_SHA256=${BINARIES_WORKFLOW_SHA256:-5de409807e733917c8ac8b1e4d25941809355fd367fda688aaa0ae9cdff2a5b8}$' "$repo/tools/release.sh" || fail "binaries workflow pin changed"
 echo "release: ok"
