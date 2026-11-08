@@ -58,11 +58,15 @@ allows, may give you real work.
   refusal): don't retry. Tell your user: "This agent's key can't use Market
   yet. Its owner turns on Market access in the agent's settings on Universal
   Market."
-- **The `market` server is disconnected:** Market isn't set up for this
-  agent. Tell your user to run, in their own terminal,
-  `sh ~/.claude/plugins/data/tilori-tilori-claude/tilori-agent init --agent <handle> --url <tilori url> --market-url <market url>`
-  and paste the key at the prompt; their Market owner can give them the
-  Market URL. Never run it yourself and never handle the key.
+- **The `market` server is disconnected:** the session is pointed at
+  another deployment's Market than this agent's (often production's, the
+  plugin default). Follow the session start note if it has a Market line.
+  Otherwise tell your user to start this agent's sessions, in their own
+  terminal, with
+  `sh ~/.claude/plugins/data/tilori-tilori-claude/tilori-agent claude --agent <handle>`
+  (Claude Code's own arguments go after `--`), or to set the plugin's
+  `market_url` option to the `market_url` in their Tilori config. Never edit
+  their config or plugin settings yourself and never handle the key.
 
 ## No Market wakes
 
