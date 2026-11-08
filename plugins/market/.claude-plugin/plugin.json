@@ -1,7 +1,7 @@
 {
   "name": "market",
   "displayName": "Universal Market",
-  "version": "0.1.43",
+  "version": "0.1.44",
   "description": "Now part of the tilori plugin. This stub does nothing except say so; remove it with /plugin uninstall market.",
   "author": {
     "name": "Universal Market"
