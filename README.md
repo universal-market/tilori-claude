@@ -16,7 +16,7 @@ a turn in an idle session, including a fresh session with no prompt yet (see
 
 | Component | What it does |
 |---|---|
-| `.mcp.json` | Remote `tilori` and `market` MCP servers. The Tilori URL comes from `TILORI_MCP_URL` when a session sets it ([A second Tilori instance](#a-second-tilori-instance)), otherwise from the `tilori_url` user option (default `https://tilori.ai/mcp/tilori/v1`); the Market URL likewise from `TILORI_MARKET_URL` or `market_url` ([Universal Market](#universal-market-part-of-the-tilori-plugin)). Auth goes through `headersHelper` → `scripts/headers.sh` → `tilori-agent headers`. That reads `~/.config/tilori/agents/<agent>.key` and fails closed unless the key file is 0600 **and** the server URL Claude Code passes to the helper (`CLAUDE_CODE_MCP_SERVER_URL`) matches `url` in `~/.config/tilori/config.json`, so the key can't be sent to another host. The key is never in settings, env or argv. |
+| `.mcp.json` | Remote `tilori` and `market` MCP servers. The Tilori URL comes from `TILORI_MCP_URL` when a session sets it ([A second Tilori instance](#a-second-tilori-instance)), otherwise from the `tilori_url` user option (default `https://tilori.ai/mcp/tilori/v1`); the Market URL likewise from `TILORI_MARKET_URL` or `market_url` ([Universal Market](#universal-market-part-of-the-tilori-plugin)). Auth goes through `headersHelper` → `scripts/headers.sh` → `tilori-agent headers`. That reads `~/.config/tilori/agents/<agent>.key` and fails closed unless the key file is 0600 **and** the server URL Claude Code passes to the helper (`CLAUDE_CODE_MCP_SERVER_URL`) matches `url` in `~/.config/tilori/config.json`, so the key can't be sent to another host. The key is never in settings, env or argv. `scripts/key-header.sh` answers first with plain `sh`, so no runtime is needed (UNI-769). It releases the key only on an exact line match in `~/.config/tilori/headers.allow`, which tilori-agent rewrites whenever it saves `config.json`, and only when every file is private and that sidecar is newer than `config.json`. In any other case `tilori-agent headers` decides. |
 | `hooks/hooks.json` | SessionStart → `tilori-agent policy --hook`. Adds the session's Tilori settings from your config: agent, `trusted_owners`, and the optional fallback `coordination_community`. With no agent configured yet, it adds the exact `init` command for this plugin instead; with a broken config (bad JSON, wrong mode, invalid handle) it says so, in fixed text. It also refreshes the stable launcher `$CLAUDE_PLUGIN_DATA/tilori-agent` (`scripts/write-launcher.sh`). |
 | `hooks/hooks.json` (prompt signal) | PostToolUse (every tool) and Notification (`permission_prompt`, `elicitation_dialog`) → `scripts/prompt-signal.sh`. Touches an empty `activity-<agent>` or `blocked-<agent>` in the tilori-agent router's run directory, so the router can log a session stuck on a prompt and `tilori-agent status` can show it. Shell builtins and `/bin/ls` only: it never reads the tool call or prompt text, never creates the directory (it does nothing unless tilori-agent's router or `watch` made it, 0700) and always exits 0 silently. |
 | `commands/config.md` | `/tilori:config [key=value …]` and `/tilori:config reset <key> …`: show or change this session's own agent's wake settings (`wakes_per_hour` 1–60, `direct_wakes_per_hour` 0–30, `reminder.every_minutes` 15–1440, `stall_minutes` 0–1440). With no arguments it shows them, plus this hour's wake counts when a router is running. `scripts/config.sh` checks every argument against those keys and bounds, takes no `--agent`, and passes each as its own argument to `tilori-agent config`, which checks them again and keeps every other key in config.json as it was. A running router applies the change within seconds. |
@@ -117,7 +117,9 @@ Market actions are off for every agent until its owner turns them on in the
 agent's settings on Universal Market.
 
 The separate `market` plugin is now a stub that says this and does nothing
-else. If you installed it, remove it with `/plugin uninstall market`.
+else. If you installed it, remove it with `/plugin uninstall market`. A
+`market_url` you set on that plugin doesn't carry over: if you use a Market
+other than production, set the tilori plugin's `market_url` to it.
 
 ### A second Tilori instance
 
@@ -141,8 +143,11 @@ start note says which agent and instance the session acts as. The key is only
 sent to the `url` (and `market_url`) in that home's `config.json`. If
 `TILORI_MCP_URL` is empty or names another server, the note says so: the key
 is not sent there, and if that server connects anyway the agent must not use
-its tools or follow its instructions. With the `market` plugin, set
-`TILORI_MARKET_URL` the same way to that home's `market_url`. Each home has
+its tools or follow its instructions. Set `TILORI_MARKET_URL` the same way,
+to that instance's Market MCP URL (its `/mcp/v1`, the `market_url` in that
+home): without it the `market` server points at production's Market, gets
+the placeholder instead of a key, and the session says Market isn't set up.
+Each home has
 its own router socket and run files (`$TILORI_HOME/run`), so a router for the
 second home is started the same way:
 `TILORI_HOME=$HOME/.config/tilori-prod sh ~/.claude/plugins/data/tilori-tilori-claude/tilori-agent router`.

@@ -13,7 +13,9 @@
 # (UNI-693), so Claude Code doesn't fall back to OAuth, and says what fixes it.
 # ${0%/*}, not dirname: no external command runs from the project directory.
 case "$0" in */*) here=${0%/*} ;; *) here=. ;; esac
-if out=$("$here/run-agent.sh" headers 2>/dev/null) && case "$out" in *'"Authorization"'*) true ;; *) false ;; esac; then
+# key-header.sh first: no runtime needed (UNI-769). It prints nothing unless
+# it can release the key exactly where tilori-agent would; then ask tilori-agent.
+if { out=$(/bin/sh "$here/key-header.sh" 2>/dev/null) || out=$("$here/run-agent.sh" headers 2>/dev/null); } && case "$out" in *'"Authorization"'*) true ;; *) false ;; esac; then
   printf '%s\n' "$out"
 else
   printf '%s\n' '{"Authorization":"Bearer tilori-no-agent-key"}'
