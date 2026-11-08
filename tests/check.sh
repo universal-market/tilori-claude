@@ -62,6 +62,7 @@ echo "== headers sentinel"; sh tests/headers-sentinel.sh
 echo "== market headers"; sh tests/market-headers.sh
 echo "== key header (no runtime)"; sh tests/key-header.sh
 echo "== runtimes (bun, node, binary)"; sh tests/runtimes.sh
+echo "== setup command"; sh tests/setup-command.sh
 echo "== config command"; sh tests/config-command.sh
 echo "== release script"; sh tests/release.sh
 echo "== bundle verify"; sh tests/bundle-verify.sh
