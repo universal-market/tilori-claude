@@ -6976,18 +6976,18 @@ var require_dist = __commonJS(function(exports, module) {
 });
 
 // src/cli.ts
-import { spawn as spawn2 } from "child_process";
-import { existsSync as existsSync4, readdirSync as readdirSync2 } from "fs";
-import { join as join5 } from "path";
+import { spawn as spawn3 } from "child_process";
+import { existsSync as existsSync5, readdirSync as readdirSync3 } from "fs";
+import { join as join6 } from "path";
 
 // src/activity.ts
 import { closeSync, constants, futimesSync, lstatSync as lstatSync3, openSync, readFileSync as readFileSync3, writeSync } from "fs";
-import { dirname as dirname3, join as join4 } from "path";
+import { dirname as dirname4, join as join4 } from "path";
 
 // src/ipc.ts
-import { existsSync as existsSync3, lstatSync as lstatSync2, chmodSync as chmodSync2, unlinkSync } from "fs";
+import { existsSync as existsSync3, lstatSync as lstatSync2, chmodSync as chmodSync2, unlinkSync as unlinkSync2 } from "fs";
 import { createConnection, createServer } from "net";
-import { dirname as dirname2, join as join3 } from "path";
+import { dirname as dirname3, join as join3 } from "path";
 import { randomUUID } from "crypto";
 
 // src/keys.ts
@@ -6999,10 +6999,11 @@ import {
   readFileSync,
   realpathSync,
   renameSync,
+  unlinkSync,
   writeFileSync
 } from "fs";
 import { homedir } from "os";
-import { isAbsolute, join, resolve } from "path";
+import { dirname, isAbsolute, join, resolve } from "path";
 var HANDLE_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 function defaultTiloriHome() {
   return join(homedir(), ".config", "tilori");
@@ -7105,19 +7106,42 @@ function readKey(handle) {
     throw new Error(`Key file ${path} is malformed.`);
   return key;
 }
+function writePrivateFile(path, text) {
+  assertPrivate(dirname(path), true);
+  let st = null;
+  try {
+    st = lstatSync(path);
+  } catch (cause) {
+    if (cause.code !== "ENOENT")
+      throw cause;
+  }
+  if (st) {
+    if (st.isSymbolicLink())
+      throw new Error(`${path} must not be a symlink.`);
+    if (!st.isFile())
+      throw new Error(`${path} must be a regular file.`);
+  }
+  const tmp = `${path}.${process.pid}.tmp`;
+  writeFileSync(tmp, text, { mode: 384, flag: "wx" });
+  try {
+    chmodSync(tmp, 384);
+    renameSync(tmp, path);
+  } catch (cause) {
+    try {
+      unlinkSync(tmp);
+    } catch {}
+    throw cause;
+  }
+  return path;
+}
 function writeKey(handle, key) {
   const trimmed = key.trim();
   if (!trimmed || /\s/.test(trimmed))
     throw new Error("Key is empty or contains whitespace.");
   ensurePrivateDir(tiloriHome());
   ensurePrivateDir(join(tiloriHome(), "agents"));
-  const path = keyPath(handle);
-  const tmp = `${path}.${process.pid}.tmp`;
-  writeFileSync(tmp, trimmed + `
-`, { mode: 384, flag: "wx" });
-  chmodSync(tmp, 384);
-  renameSync(tmp, path);
-  return path;
+  return writePrivateFile(keyPath(handle), trimmed + `
+`);
 }
 var TOKEN_PATTERNS = [
   /mcp_sk_[A-Za-z0-9_-]+/g,
@@ -7139,11 +7163,11 @@ function redact(text, secrets = []) {
 }
 
 // src/config.ts
-import { existsSync as existsSync2, readdirSync, readFileSync as readFileSync2, renameSync as renameSync2, writeFileSync as writeFileSync2 } from "fs";
-import { dirname, join as join2 } from "path";
+import { existsSync as existsSync2, readdirSync, readFileSync as readFileSync2 } from "fs";
+import { dirname as dirname2, join as join2 } from "path";
 
 // src/version.ts
-var VERSION = "0.1.31";
+var VERSION = "0.1.32";
 
 // src/config.ts
 var DEFAULT_WAKES_PER_HOUR = 20;
@@ -7296,11 +7320,9 @@ function loadConfig(path = configPath()) {
 }
 function saveConfig(config, path = configPath()) {
   ensurePrivateDir(tiloriHome());
-  const tmp = `${path}.${process.pid}.tmp`;
-  writeFileSync2(tmp, JSON.stringify(config, null, 2) + `
-`, { mode: 384, flag: "wx" });
-  renameSync2(tmp, path);
-  writeHeadersAllow(config, dirname(path));
+  writePrivateFile(path, JSON.stringify(config, null, 2) + `
+`);
+  writeHeadersAllow(config, dirname2(path));
 }
 var HEADERS_ALLOW = "headers.allow";
 function headersAllowText(config, agents) {
@@ -7344,10 +7366,7 @@ function writeHeadersAllow(config, home) {
   if (existsSync2(dir)) {
     agents = readdirSync(dir).filter((f) => f.endsWith(".key")).map((f) => f.slice(0, -".key".length)).filter((h) => HANDLE_RE.test(h));
   }
-  const path = join2(home, HEADERS_ALLOW);
-  const tmp = `${path}.${process.pid}.tmp`;
-  writeFileSync2(tmp, headersAllowText(config, agents), { mode: 384, flag: "wx" });
-  renameSync2(tmp, path);
+  writePrivateFile(join2(home, HEADERS_ALLOW), headersAllowText(config, agents));
 }
 function resolveAgent(config, explicit) {
   const raw = explicit || process.env.TILORI_AGENT || config.default_agent;
@@ -7779,7 +7798,7 @@ function socketPath() {
   return runtime ? join3(runtime, "tilori", "router.sock") : join3(tiloriHome(), "run", "router.sock");
 }
 function assertOwnedSocket(path) {
-  assertPrivate(dirname2(path), true);
+  assertPrivate(dirname3(path), true);
   const st = lstatSync2(path);
   if (!st.isSocket())
     throw new Error(`${path} is not a socket.`);
@@ -7851,7 +7870,7 @@ class RemoteInjector {
   }
 }
 async function serveRouter(router, path = socketPath(), log = () => {}) {
-  ensurePrivateDir(dirname2(path));
+  ensurePrivateDir(dirname3(path));
   if (existsSync3(path)) {
     assertOwnedSocket(path);
     const live = await new Promise((resolve) => {
@@ -7864,7 +7883,7 @@ async function serveRouter(router, path = socketPath(), log = () => {}) {
     });
     if (live)
       throw new Error(`A tilori-agent router is already listening on ${path}.`);
-    unlinkSync(path);
+    unlinkSync2(path);
   }
   const conns = new Set;
   const server = createServer((sock) => {
@@ -8028,7 +8047,7 @@ function routerUsage(agent, path = socketPath()) {
 var DEFAULT_STALL_MINUTES = 10;
 var MAX_STALL_MINUTES = 1440;
 function activityDir() {
-  return dirname3(socketPath());
+  return dirname4(socketPath());
 }
 function touchSignal(dir, kind, handle) {
   const path = join4(dir, `${kind}-${validateHandle(handle)}`);
@@ -19983,7 +20002,7 @@ class Router {
 
 // src/settings.ts
 import { watch } from "fs";
-import { basename, dirname as dirname4 } from "path";
+import { basename, dirname as dirname5 } from "path";
 var MAX_SET_WAKES = 60;
 var MAX_SET_DIRECT = 30;
 var MAX_REMINDER_MINUTES = 1440;
@@ -20167,7 +20186,7 @@ function followConfig(router, log, signal, path = configPath(), debounceMs = 500
   };
   let watcher;
   try {
-    watcher = watch(dirname4(path), (_event, name) => {
+    watcher = watch(dirname5(path), (_event, name) => {
       if (name && name !== basename(path))
         return;
       clearTimeout(timer);
@@ -20457,6 +20476,540 @@ async function upload(o) {
   }
 }
 
+// src/setup.ts
+import { spawn as spawn2 } from "child_process";
+import { existsSync as existsSync4, readdirSync as readdirSync2, readFileSync as readFileSync4, unlinkSync as unlinkSync3 } from "fs";
+import { userInfo } from "os";
+import { join as join5 } from "path";
+var DEFAULT_ORIGIN = "https://tilori.ai";
+var REGISTER_PATH = "/api/v1/agents/register";
+var STATUS_PATH = "/api/v1/agents/status";
+var CLAIM_WAIT_MS = 15 * 60000;
+var SETUP_HTTP_TIMEOUT_MS = 20000;
+var OWNER_TIMEOUT_MS = 1e4;
+var WAIT_FOR_SETUP_MS = 1e4;
+var DEFAULT_POLL_S = 5;
+var MAX_POLL_S = 60;
+var MAX_BODY = 64 * 1024;
+
+class SetupInputError extends Error {
+}
+var SETUP_HANDLE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+var HANDLE_RULE = "Agent handles are 2-24 characters: a-z, 0-9 and single hyphens, starting and ending with a letter or digit.";
+var USERNAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+var CODE_RE = /^[A-Z][A-Z0-9_]{0,63}$/;
+var CONTROL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
+function setupHandle(raw) {
+  const h = raw.replace(/^ +| +$/g, "").replace(/[A-Z]/g, (c) => c.toLowerCase());
+  if (h.length < 2 || h.length > 24 || !SETUP_HANDLE.test(h))
+    throw new SetupInputError(HANDLE_RULE);
+  return validateHandle(h);
+}
+function handleFromUser(user) {
+  const base = (user ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 24).replace(/-+$/, "");
+  try {
+    return setupHandle(base);
+  } catch {
+    return null;
+  }
+}
+function setupDisplayName(raw) {
+  const name = raw.trim();
+  if (!name || name.length > 100 || CONTROL.test(name)) {
+    throw new SetupInputError("--name must be one line of at most 100 characters.");
+  }
+  return name;
+}
+var LOOPBACK = ["localhost", "127.0.0.1", "[::1]"];
+var isLoopback = (u) => LOOPBACK.includes(u.hostname);
+function setupOrigin(raw) {
+  let url;
+  try {
+    url = new URL((raw ?? DEFAULT_ORIGIN).trim());
+  } catch {
+    throw new SetupInputError("--url-origin must be an https origin such as https://tilori.ai.");
+  }
+  if (url.username || url.password || url.search || url.hash || url.pathname !== "/" && url.pathname !== "") {
+    throw new SetupInputError("--url-origin must be a bare origin: no path, query, fragment or credentials.");
+  }
+  if (!allowedUrl(url, url))
+    throw new SetupInputError("--url-origin must use https (http only for a loopback host).");
+  return new URL(url.origin);
+}
+function allowedUrl(u, origin) {
+  if (u.username || u.password)
+    return false;
+  if (u.protocol === "https:")
+    return true;
+  return u.protocol === "http:" && isLoopback(u) && origin.protocol === "http:" && isLoopback(origin);
+}
+function pendingDir() {
+  return join5(tiloriHome(), "pending");
+}
+function pendingPath(handle) {
+  return join5(pendingDir(), `${validateHandle(handle)}.json`);
+}
+function writePending(p) {
+  ensurePrivateDir(tiloriHome());
+  ensurePrivateDir(pendingDir());
+  return writePrivateFile(pendingPath(p.handle), JSON.stringify(p) + `
+`);
+}
+function readPending(handle) {
+  const path = pendingPath(handle);
+  if (!existsSync4(path))
+    return null;
+  assertPrivate(tiloriHome(), true);
+  assertPrivate(pendingDir(), true);
+  assertPrivate(path);
+  let parsed;
+  try {
+    parsed = JSON.parse(readFileSync4(path, "utf8"));
+  } catch {
+    throw new Error(`${path} is not valid JSON; remove it and run setup again.`);
+  }
+  const s = (k) => typeof parsed?.[k] === "string" && parsed[k].trim() ? parsed[k] : null;
+  const id = s("id");
+  const key = s("api_key");
+  const status = s("status_url");
+  const origin = s("origin");
+  if (!id || !key || /\s/.test(key) || !status || !origin || s("handle") !== validateHandle(handle)) {
+    throw new Error(`${path} is malformed; remove it and run setup again.`);
+  }
+  let originUrl;
+  let statusUrl;
+  try {
+    originUrl = new URL(origin);
+    statusUrl = new URL(status);
+  } catch {
+    throw new Error(`${path} is malformed; remove it and run setup again.`);
+  }
+  if (statusUrl.origin !== originUrl.origin || !allowedUrl(statusUrl, originUrl) || !allowedUrl(originUrl, originUrl)) {
+    throw new Error(`${path} names a status URL off its origin; remove it and run setup again.`);
+  }
+  const poll = parsed.poll_after_seconds;
+  return {
+    id,
+    handle: validateHandle(handle),
+    api_key: key,
+    status_url: statusUrl.href,
+    expires_at: s("expires_at") ?? "",
+    poll_after_seconds: Number.isInteger(poll) && poll >= 1 && poll <= MAX_POLL_S ? poll : DEFAULT_POLL_S,
+    origin: originUrl.origin,
+    created_at: s("created_at") ?? ""
+  };
+}
+function deletePending(handle) {
+  try {
+    unlinkSync3(pendingPath(handle));
+  } catch (cause) {
+    if (cause.code !== "ENOENT")
+      throw cause;
+  }
+}
+function listPending() {
+  const dir = pendingDir();
+  if (!existsSync4(dir))
+    return [];
+  return readdirSync2(dir).filter((f) => f.endsWith(".json")).map((f) => f.slice(0, -5)).filter((h) => {
+    try {
+      validateHandle(h);
+      return true;
+    } catch {
+      return false;
+    }
+  }).map((h) => {
+    let at = 0;
+    try {
+      at = Date.parse(readPending(h)?.created_at ?? "") || 0;
+    } catch {}
+    return { h, at };
+  }).sort((a, b) => b.at - a.at).map((x) => x.h);
+}
+async function request(url, init, o) {
+  const signals = [AbortSignal.timeout(o.timeoutMs ?? SETUP_HTTP_TIMEOUT_MS)];
+  if (o.signal)
+    signals.push(o.signal);
+  const res = await (o.fetch ?? fetch)(url, { ...init, redirect: "error", signal: AbortSignal.any(signals) });
+  let text = "";
+  try {
+    text = (await res.text()).slice(0, MAX_BODY);
+  } catch {}
+  try {
+    return { status: res.status, json: JSON.parse(text), parsed: true, headers: res.headers };
+  } catch {
+    return { status: res.status, json: undefined, parsed: false, headers: res.headers };
+  }
+}
+function errorCode(json) {
+  const j = json;
+  const code = j?.error?.code ?? j?.code;
+  return typeof code === "string" && CODE_RE.test(code) ? ` ${code}` : "";
+}
+function registerRefusal(status, code = "") {
+  if (status === 400)
+    return `Tilori refused the registration (HTTP 400${code}): check the handle and display name.`;
+  if (status === 403)
+    return `Tilori refused that handle or name as reserved (HTTP 403${code}); pick another.`;
+  if (status === 429)
+    return "Tilori is rate-limiting registrations (HTTP 429); try again in a few minutes.";
+  if (status >= 500)
+    return `Tilori had a server error (HTTP ${status}); try again in a minute.`;
+  return `Tilori refused the registration (HTTP ${status}${code}).`;
+}
+function transportFailure(cause, what, host, timeoutMs) {
+  const name = cause?.name;
+  if (name === "TimeoutError")
+    return new Error(`Tilori did not answer ${what} within ${Math.round(timeoutMs / 1000)} s; try again.`);
+  if (name === "AbortError")
+    return new Error(`${what} was stopped before Tilori answered.`);
+  const msg = cause instanceof Error ? cause.message : "";
+  if (/redirect/i.test(msg))
+    return new Error(`Tilori answered ${what} with a redirect, which is not followed.`);
+  return new Error(`Could not reach ${host} for ${what}; check the network and the URL.`);
+}
+async function register(o) {
+  const url = new URL(REGISTER_PATH, o.origin);
+  let res;
+  try {
+    res = await request(url, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify({ handle: o.handle, display_name: o.displayName })
+    }, o);
+  } catch (cause) {
+    throw transportFailure(cause, "the registration", o.origin.host, o.timeoutMs ?? SETUP_HTTP_TIMEOUT_MS);
+  }
+  if (res.status < 200 || res.status >= 300)
+    throw new Error(registerRefusal(res.status, errorCode(res.json)));
+  if (!res.parsed)
+    throw new Error(`Tilori answered the registration with something that is not JSON (HTTP ${res.status}); try again.`);
+  const j = res.json;
+  const unusable = (why) => new Error(`Tilori's registration answer could not be used (${why}); try again.`);
+  const key = j?.api_key;
+  if (typeof key !== "string" || !key.trim() || /\s/.test(key.trim()) || key.length > 200)
+    throw unusable("no usable api_key");
+  let claim;
+  try {
+    claim = new URL(String(j?.claim_url ?? ""));
+  } catch {
+    throw unusable("no claim link");
+  }
+  if (claim.origin !== o.origin.origin || !allowedUrl(claim, o.origin))
+    throw unusable("the claim link is not on the Tilori origin");
+  let status;
+  try {
+    status = new URL(typeof j?.status_url === "string" ? j.status_url : STATUS_PATH, o.origin);
+  } catch {
+    throw unusable("no status URL");
+  }
+  if (status.origin !== o.origin.origin || !allowedUrl(status, o.origin))
+    throw unusable("the status URL is not on the Tilori origin");
+  const now = o.now?.() ?? Date.now();
+  const expires = typeof j?.expires_at === "string" ? Date.parse(j.expires_at) : NaN;
+  const poll = j?.poll_after_seconds;
+  const id = typeof j?.id === "string" && j.id.trim() && j.id.length <= 64 ? j.id : `local-${now}`;
+  return {
+    pending: {
+      id,
+      handle: o.handle,
+      api_key: key.trim(),
+      status_url: status.href,
+      expires_at: new Date(Number.isFinite(expires) ? expires : now + 24 * 3600000).toISOString(),
+      poll_after_seconds: Number.isInteger(poll) && poll >= 1 && poll <= MAX_POLL_S ? poll : DEFAULT_POLL_S,
+      origin: o.origin.origin,
+      created_at: new Date(now).toISOString()
+    },
+    claimUrl: claim.href
+  };
+}
+async function checkStatus(p, o = {}) {
+  let res;
+  try {
+    res = await request(new URL(p.status_url), { method: "GET", headers: { authorization: `Bearer ${p.api_key}`, accept: "application/json" } }, o);
+  } catch (cause) {
+    const name = cause?.name;
+    return { kind: "retry", why: name === "TimeoutError" ? "no answer in time" : name === "AbortError" ? "stopped" : "unreachable", pollAfterMs: null };
+  }
+  if (res.status === 400 || res.status === 401 || res.status === 404)
+    return { kind: "gone" };
+  if (res.status === 429) {
+    const after = Number(res.headers.get("retry-after"));
+    return { kind: "retry", why: "rate limited", pollAfterMs: Number.isFinite(after) && after > 0 ? Math.min(after, MAX_POLL_S) * 1000 : 30000 };
+  }
+  if (res.status < 200 || res.status >= 300)
+    return { kind: "retry", why: `HTTP ${res.status}`, pollAfterMs: null };
+  if (!res.parsed)
+    return { kind: "retry", why: "not JSON", pollAfterMs: null };
+  const j = res.json;
+  const poll = j?.poll_after_seconds;
+  const pollAfterMs = Number.isInteger(poll) && poll >= 1 && poll <= MAX_POLL_S ? poll * 1000 : null;
+  if (j?.status === "pending")
+    return { kind: "pending", pollAfterMs };
+  if (j?.status !== "claimed")
+    return { kind: "retry", why: "unexpected answer", pollAfterMs };
+  let handle;
+  try {
+    handle = setupHandle(String(j?.handle ?? ""));
+  } catch {
+    return { kind: "unusable", why: "the handle in it is invalid" };
+  }
+  const origin = new URL(p.origin);
+  let rawTilori;
+  let rawMarket;
+  try {
+    rawTilori = new URL(String(j?.urls?.tilori ?? ""));
+    rawMarket = new URL(String(j?.urls?.market ?? ""));
+  } catch {
+    return { kind: "unusable", why: "its server URLs are missing" };
+  }
+  if (!allowedUrl(rawTilori, origin) || !allowedUrl(rawMarket, origin))
+    return { kind: "unusable", why: "its server URLs are not https" };
+  let tilori;
+  let market;
+  try {
+    tilori = buildMcpUrl(rawTilori.href);
+    market = buildMarketUrl(rawMarket.href);
+  } catch {
+    return { kind: "unusable", why: "its server URLs are not MCP endpoints" };
+  }
+  return { kind: "claimed", handle, tilori, market };
+}
+var LINES = {
+  creating: (handle) => `Creating @${handle}\u2026`,
+  link: (handle) => `Open this link to connect @${handle} to your account:`,
+  wait: "Waiting for your approval in the browser. You can keep working; I'll tell you when it's done.",
+  reuse: (handle) => `@${handle} is already set up here, so I'm using it. To add another agent, run /tilori:setup <new-handle>.`,
+  live: (owner, handle) => `You're live as @${owner}.${handle} on Tilori and Universal Market. Owned by ${owner}. ` + "Not you? Disconnect it under Account \u2192 Agents and run /tilori:setup again. Paid Market actions are off.",
+  connected: (handle) => `@${handle} is connected on Tilori and Universal Market, but its owner couldn't be read yet. ` + "Check it under Account \u2192 Agents; if it isn't yours, disconnect it there and run /tilori:setup again. Paid Market actions are off.",
+  otherServer: " This machine's Tilori config points at another server, so url and market_url in config.json were left as they were; edit them by hand to use this agent.",
+  timeout: "Didn't see an approval in 15 minutes. Run /tilori:setup again.",
+  expired: (handle) => `The sign-in link for @${handle} expired or was already used. Run /tilori:setup again.`,
+  keyExists: (handle) => `@${handle} already has a key here, so the new one wasn't saved. Remove it first or run /tilori:setup with another handle.`,
+  server: (host) => ` Server: ${host}.`,
+  unusable: (handle, why) => `Tilori's answer for @${handle} couldn't be used (${why}). Run /tilori:setup again.`
+};
+function openBrowser(url, log, platform = process.platform) {
+  const cmd = platform === "darwin" ? "open" : "xdg-open";
+  try {
+    const child = spawn2(cmd, [url], { stdio: "ignore", detached: true });
+    child.once("error", () => log(`could not open a browser (${cmd} is not available); open the link yourself`));
+    child.unref();
+  } catch {
+    log(`could not open a browser; open the link yourself`);
+  }
+}
+async function runSetup(o) {
+  const origin = setupOrigin(o.origin);
+  const config = loadConfig();
+  let handle;
+  let derived = false;
+  if (o.handle !== undefined) {
+    handle = setupHandle(o.handle);
+  } else {
+    if (config.default_agent && existsSync4(keyPath(config.default_agent))) {
+      o.out(LINES.reuse(validateHandle(config.default_agent)));
+      return 0;
+    }
+    const fromUser = handleFromUser(o.user ?? safeUserName());
+    if (!fromUser)
+      throw new SetupInputError(`Pass a handle: tilori-agent setup <handle>. ${HANDLE_RULE}`);
+    handle = fromUser;
+    derived = true;
+  }
+  if (existsSync4(keyPath(handle))) {
+    o.out(LINES.reuse(handle));
+    return 0;
+  }
+  const displayName = o.name === undefined ? handle : setupDisplayName(o.name);
+  if (derived)
+    o.out(LINES.creating(handle));
+  const { pending, claimUrl } = await register({ ...o, origin, handle, displayName });
+  writePending(pending);
+  o.out(LINES.link(handle));
+  o.out(claimUrl);
+  if (!o.noBrowser)
+    openBrowser(claimUrl, o.log, o.platform);
+  o.out(LINES.wait);
+  return 0;
+}
+function safeUserName() {
+  try {
+    return userInfo().username;
+  } catch {
+    return process.env.USER;
+  }
+}
+function sleep2(ms, signal) {
+  return new Promise((resolve) => {
+    if (signal?.aborted)
+      return resolve();
+    const t = setTimeout(done, ms);
+    function done() {
+      clearTimeout(t);
+      signal?.removeEventListener("abort", done);
+      resolve();
+    }
+    signal?.addEventListener("abort", done, { once: true });
+  });
+}
+async function pollClaim(o) {
+  const now = o.now ?? Date.now;
+  const wait = o.sleep ?? sleep2;
+  const secrets = [];
+  const log = (m) => o.log(redact(m, secrets));
+  let p;
+  try {
+    p = readPending(o.handle);
+  } catch (cause) {
+    o.log(cause instanceof Error ? cause.message : String(cause));
+    return { result: "no-file" };
+  }
+  if (!p)
+    return { result: "no-file" };
+  secrets.push(p.api_key);
+  let deadline = deadlineFor(p, now(), o.deadlineMs);
+  let intervalMs = o.pollIntervalMs ?? p.poll_after_seconds * 1000;
+  log(`waiting for @${p.handle} to be approved in the browser`);
+  while (!o.signal?.aborted) {
+    const ans = await checkStatus(p, o);
+    if (o.signal?.aborted)
+      break;
+    if (ans.kind === "claimed") {
+      if (existsSync4(keyPath(ans.handle))) {
+        deletePending(p.handle);
+        await o.write(LINES.keyExists(ans.handle));
+        return { result: "kept-existing" };
+      }
+      const line = await finishClaim(p, ans, { ...o, log });
+      deletePending(p.handle);
+      await o.write(line);
+      return { result: "claimed", handle: ans.handle };
+    }
+    if (ans.kind === "gone") {
+      deletePending(p.handle);
+      await o.write(LINES.expired(p.handle));
+      return { result: "expired" };
+    }
+    if (ans.kind === "unusable") {
+      deletePending(p.handle);
+      await o.write(LINES.unusable(p.handle, ans.why));
+      return { result: "unusable" };
+    }
+    if (ans.kind === "retry")
+      log(`status check for @${p.handle} failed (${ans.why}); trying again`);
+    if (ans.pollAfterMs && o.pollIntervalMs === undefined)
+      intervalMs = ans.pollAfterMs;
+    if (now() >= deadline) {
+      deletePending(p.handle);
+      await o.write(LINES.timeout);
+      return { result: "timeout" };
+    }
+    await wait(Math.max(0, Math.min(intervalMs, deadline - now())), o.signal);
+    let cur;
+    try {
+      cur = readPending(o.handle);
+    } catch (cause) {
+      log(cause instanceof Error ? cause.message : String(cause));
+      return { result: "no-file" };
+    }
+    if (!cur)
+      return { result: "no-file" };
+    if (cur.id !== p.id || cur.api_key !== p.api_key) {
+      p = cur;
+      secrets.push(p.api_key);
+      deadline = deadlineFor(p, now(), o.deadlineMs);
+      intervalMs = o.pollIntervalMs ?? p.poll_after_seconds * 1000;
+      log(`a new registration for @${p.handle} replaced the one being watched`);
+    }
+  }
+  return { result: "cancelled" };
+}
+function deadlineFor(p, now, deadlineMs = CLAIM_WAIT_MS) {
+  const expires = Date.parse(p.expires_at);
+  return Math.min(now + deadlineMs, Number.isFinite(expires) ? expires : Infinity);
+}
+async function finishClaim(p, ans, o) {
+  writeKey(ans.handle, p.api_key);
+  const config = loadConfig();
+  let sameServer = true;
+  if (config.url) {
+    try {
+      sameServer = sameEndpoint(buildMcpUrl(config.url), ans.tilori);
+    } catch {
+      sameServer = false;
+    }
+  }
+  if (sameServer) {
+    config.url = ans.tilori.href;
+    config.market_url = ans.market.href;
+  } else {
+    o.log(`config.json names another Tilori server than the one @${ans.handle} was claimed on; url and market_url were left unchanged`);
+  }
+  config.agents ??= {};
+  config.agents[ans.handle] ??= {};
+  if (!config.default_agent)
+    config.default_agent = ans.handle;
+  saveConfig(config);
+  const owner = await readOwner(ans.tilori, p.api_key, ans.handle, o);
+  const host = ans.tilori.host === new URL(DEFAULT_ORIGIN).host ? "" : LINES.server(ans.tilori.host);
+  return (owner ? LINES.live(owner, ans.handle) : LINES.connected(ans.handle)) + host + (sameServer ? "" : LINES.otherServer);
+}
+async function readOwner(tilori, apiKey, handle, o) {
+  const client = new TiloriAgentClient({ url: tilori, apiKey, logger: o.log, fetch: o.fetch });
+  try {
+    const res = await client.call("get_my_profile", {}, { signal: o.signal, timeout: o.ownerTimeoutMs ?? OWNER_TIMEOUT_MS });
+    const username = res?.profile?.username;
+    const got = res?.profile?.handle;
+    if (typeof username !== "string" || !USERNAME.test(username) || username.length < 3 || username.length > 20)
+      return null;
+    if (got !== handle)
+      return null;
+    return username;
+  } catch (cause) {
+    o.log(`could not read the owner of @${handle}: ${cause instanceof Error ? cause.message : String(cause)}`);
+    return null;
+  } finally {
+    await client.close();
+  }
+}
+async function awaitAgentKey(o) {
+  const wait = o.sleep ?? sleep2;
+  let saidWaiting = false;
+  let agent = o.explicit ?? o.configured ?? null;
+  while (!o.signal?.aborted) {
+    if (agent && existsSync4(keyPath(agent)))
+      return agent;
+    let pendingHandle = null;
+    try {
+      if (agent && readPending(agent))
+        pendingHandle = agent;
+      else if (!o.explicit)
+        pendingHandle = listPending()[0] ?? null;
+    } catch (cause) {
+      o.log(cause instanceof Error ? cause.message : String(cause));
+    }
+    if (pendingHandle) {
+      const outcome = await pollClaim({ ...o, handle: pendingHandle });
+      if (outcome.result === "claimed") {
+        agent = o.explicit ?? outcome.handle;
+        continue;
+      }
+      if (outcome.result === "cancelled")
+        return null;
+      if (!o.explicit)
+        agent = o.configured ?? null;
+      saidWaiting = false;
+    }
+    if (!saidWaiting) {
+      o.log(agent ? `no key for agent ${agent} yet; waiting for tilori-agent setup` : "no agent key yet; waiting for tilori-agent setup");
+      saidWaiting = true;
+    }
+    await wait(o.waitMs ?? WAIT_FOR_SETUP_MS, o.signal);
+  }
+  return null;
+}
+
 // src/injectors/notify-lines.ts
 class NotifyLinesInjector {
   out;
@@ -20525,6 +21078,19 @@ function signalDir(log = () => {}) {
     return;
   }
 }
+var orphanCheck = null;
+function exitWhenOrphaned(log = () => {}) {
+  if (orphanCheck)
+    return;
+  const parent = process.ppid;
+  orphanCheck = setInterval(() => {
+    if (process.ppid !== parent) {
+      log("parent session ended; exiting");
+      process.exit(0);
+    }
+  }, 5000);
+  orphanCheck.unref();
+}
 function directRouter(opts) {
   const settings = opts.config.agents?.[opts.agent] ?? {};
   const url = keyUrl(opts.config, opts.url);
@@ -20552,14 +21118,7 @@ function directRouter(opts) {
 }
 async function runNotifyLines(opts) {
   const log = opts.logger ?? (() => {});
-  const parent = process.ppid;
-  const orphanCheck = setInterval(() => {
-    if (process.ppid !== parent) {
-      log("parent session ended; exiting");
-      process.exit(0);
-    }
-  }, 5000);
-  orphanCheck.unref();
+  exitWhenOrphaned(log);
   const injector = opts.injector ?? new NotifyLinesInjector(process.stdout, () => {
     log("stdout closed; exiting");
     process.exit(0);
@@ -20612,6 +21171,18 @@ async function runNotifyLines(opts) {
 var USAGE = `tilori-agent: wake local coding agents on Tilori events
 
 Usage:
+  tilori-agent setup [<handle>] [--name <display name>] [--url-origin <https-origin>] [--no-browser]
+      Signs a new agent in without a pasted key: registers it on Tilori
+      (https://tilori.ai, or --url-origin), prints the claim link on its own
+      line, opens it in the browser, and returns at once. With no handle, one
+      is made from the account name and shown first. The registration waits in
+      ~/.config/tilori/pending/<handle>.json (0600; it holds the agent's key)
+      until "watch --notify-lines" sees the claim, which writes the key file
+      and config.json and says "You're live as @<owner>.<handle> \u2026". An agent
+      already set up here is reused, with a line saying so. Exit 0 with the
+      link or the reuse line, 2 for a bad handle or name, 1 when Tilori
+      refused or didn't answer. Nothing from Tilori's answers is printed
+      except the claim link.
   tilori-agent init --agent <handle> --url <tilori-mcp-url> [--market-url <market-mcp-url>] [--default] [--no-verify]
       Reads the agent's shared key from stdin and stores it at
       ~/.config/tilori/agents/<handle>.key (0600); records url and agent in config.json.
@@ -20628,6 +21199,12 @@ Usage:
   tilori-agent watch --notify-lines [--agent <handle>]
       Claude Code monitor mode: one fixed wake line per wake on stdout.
       Uses the local router if it serves the agent, else polls directly.
+      With a pending "setup" registration it first polls Tilori for the
+      claim (every poll_after_seconds, for up to 15 minutes or until the
+      registration expires), writes the key and config, and prints the
+      "You're live" line; on a timeout it prints that instead and waits for
+      the next setup. With no key and no registration it waits, checking
+      every 10 s, rather than exiting.
       When the plugin's monitor sets TILORI_PLUGIN_VERSION (x.y.z),
       TILORI_PLUGIN_MANIFEST (the host's install record) and TILORI_PLUGIN_KEY,
       a wake says once when that record's user install is newer, so the agent
@@ -20721,9 +21298,21 @@ Logs go to stderr and never include keys or event content.`;
 function parseArgs(argv) {
   const flags = new Map;
   const positionals = [];
-  const valued = new Set(["agent", "url", "market-url", "exec", "wait-ms", "server-url", "exec-timeout-ms", "bytes", "home"]);
+  const valued = new Set([
+    "agent",
+    "url",
+    "market-url",
+    "exec",
+    "wait-ms",
+    "server-url",
+    "exec-timeout-ms",
+    "bytes",
+    "home",
+    "url-origin",
+    "name"
+  ]);
   let rest = [];
-  const takes = { "get-post": 1, "search-posts": 1, upload: 2, "file-info": 1 };
+  const takes = { "get-post": 1, "search-posts": 1, upload: 2, "file-info": 1, setup: 1 };
   for (let i = 1;i < argv.length; i++) {
     const a = argv[i];
     if (a === "--" && argv[0] === "claude") {
@@ -20811,10 +21400,10 @@ async function readSecretFromStdin(prompt) {
   });
 }
 function agentsWithKeys() {
-  const dir = join5(tiloriHome(), "agents");
-  if (!existsSync4(dir))
+  const dir = join6(tiloriHome(), "agents");
+  if (!existsSync5(dir))
     return [];
-  return readdirSync2(dir).filter((f) => f.endsWith(".key")).map((f) => f.slice(0, -4)).filter((h) => {
+  return readdirSync3(dir).filter((f) => f.endsWith(".key")).map((f) => f.slice(0, -4)).filter((h) => {
     try {
       validateHandle(h);
       return true;
@@ -20842,7 +21431,7 @@ async function launchClaude(args) {
     if (a === "--settings" || a.startsWith("--settings="))
       throw new Error("claude sets Claude Code's --settings itself; pass other settings in a settings file instead.");
   const home = allowedHome(dir);
-  const config = loadConfig(join5(home, "config.json"));
+  const config = loadConfig(join6(home, "config.json"));
   const env = { TILORI_HOME: home, TILORI_MCP_URL: buildMcpUrl(config.url).toString() };
   if (config.market_url)
     env.TILORI_MARKET_URL = buildMarketUrl(config.market_url).toString();
@@ -20852,7 +21441,7 @@ async function launchClaude(args) {
   const inherited = { ...process.env };
   for (const k of LAUNCH_VARS)
     delete inherited[k];
-  const child = spawn2("claude", ["--settings", JSON.stringify({ env }), ...args.rest], {
+  const child = spawn3("claude", ["--settings", JSON.stringify({ env }), ...args.rest], {
     stdio: "inherit",
     env: { ...inherited, ...env }
   });
@@ -20932,6 +21521,27 @@ async function main(argv = process.argv.slice(2)) {
         saveConfig(config);
         log(`stored key for ${agent} at ${path} (0600); config at ${configPath()}`);
         return 0;
+      }
+      case "setup": {
+        const out = (line) => process.stdout.write(line + `
+`);
+        try {
+          return await runSetup({
+            handle: args.positionals[0],
+            name: str(args, "name"),
+            origin: str(args, "url-origin"),
+            noBrowser: args.flags.has("no-browser"),
+            signal,
+            out,
+            log
+          });
+        } catch (cause) {
+          if (cause instanceof SetupInputError) {
+            log(cause.message);
+            return 2;
+          }
+          throw cause;
+        }
       }
       case "headers": {
         const config = loadConfig();
@@ -21173,10 +21783,26 @@ async function main(argv = process.argv.slice(2)) {
         }
       }
       case "watch": {
-        const config = loadConfig();
-        const agent = requireAgent(config, args);
+        let config = loadConfig();
         const waitMs = str(args, "wait-ms") ? Number(str(args, "wait-ms")) : undefined;
         if (args.flags.has("notify-lines")) {
+          exitWhenOrphaned(log);
+          const explicitRaw = str(args, "agent") || process.env.TILORI_AGENT;
+          const explicit = explicitRaw ? validateHandle(explicitRaw) : undefined;
+          const configured = config.default_agent ? validateHandle(config.default_agent) : undefined;
+          const agent = await awaitAgentKey({
+            explicit,
+            configured,
+            signal,
+            log,
+            write: (line) => new Promise((resolve) => {
+              process.stdout.write(line.replace(/[\r\n]+/g, " ") + `
+`, () => resolve());
+            })
+          });
+          if (!agent)
+            return 0;
+          config = loadConfig();
           const running = process.env.TILORI_PLUGIN_VERSION;
           const manifest = process.env.TILORI_PLUGIN_MANIFEST;
           const key = process.env.TILORI_PLUGIN_KEY;
@@ -21184,6 +21810,7 @@ async function main(argv = process.argv.slice(2)) {
           await runNotifyLines({ agent, config, url: str(args, "url"), signal, logger: log, waitMs, update });
           return 0;
         }
+        const agent = requireAgent(config, args);
         const exec = str(args, "exec");
         if (!exec)
           throw new Error('watch needs --notify-lines or --exec "<command>".');
@@ -21221,7 +21848,7 @@ async function main(argv = process.argv.slice(2)) {
         const url = keyUrl(config, str(args, "url"));
         const handles = agentsWithKeys();
         if (!handles.length)
-          throw new Error(`No agent keys in ${join5(tiloriHome(), "agents")}. Run tilori-agent init first.`);
+          throw new Error(`No agent keys in ${join6(tiloriHome(), "agents")}. Run tilori-agent init first.`);
         const agents = handles.map((handle) => {
           const s = config.agents?.[handle] ?? {};
           const apiKey = readKey(handle);
@@ -21286,8 +21913,16 @@ async function main(argv = process.argv.slice(2)) {
           agents = loadConfig().agents ?? {};
         } catch {}
         const handles = agentsWithKeys();
+        let pending = [];
+        try {
+          pending = listPending();
+        } catch {}
+        for (const h of pending)
+          console.log(`${h}: waiting for approval in the browser (tilori-agent setup); the key is written when the claim goes through`);
         if (!handles.length) {
-          console.log(`No agents on this machine yet: no keys in ${join5(tiloriHome(), "agents")}. ` + "Run tilori-agent init --agent <handle> --url https://<deployment>.convex.site/mcp/tilori/v1");
+          if (pending.length)
+            return 0;
+          console.log(`No agents on this machine yet: no keys in ${join6(tiloriHome(), "agents")}. ` + "Run tilori-agent setup [<handle>] to create and connect one, or tilori-agent init --agent <handle> --url <tilori-mcp-url> for an existing key");
           return 0;
         }
         const router = socketIdentity() !== null;
