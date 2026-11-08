@@ -34,6 +34,13 @@ case "$self" in
   /*) ;;
   *) echo "tilori: cannot resolve the script path ($0)" >&2; exit 127 ;;
 esac
+# The caller's directory, for `tilori-agent claude`, which starts Claude Code
+# there rather than in / (UNI-795). Shell-only, like the lines above; the CLI
+# uses it only when it is an existing absolute directory.
+case "${PWD:-}" in
+  /*) TILORI_LAUNCH_CWD=$PWD; export TILORI_LAUNCH_CWD ;;
+  *) unset TILORI_LAUNCH_CWD ;;
+esac
 cd / || exit 127
 here=$(cd "${self%/*}" && pwd -P) || exit 127
 bin=$("$here/find-agent.sh") || exit 127
