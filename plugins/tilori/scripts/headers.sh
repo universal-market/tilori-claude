@@ -18,7 +18,9 @@
 case "$0" in */*) here=${0%/*} ;; *) here=. ;; esac
 # Only output that carries an Authorization header passes: `{}` or other
 # headers alone would still leave Claude Code to fall back to OAuth.
-if out=$("$here/run-agent.sh" headers 2>/dev/null) && case "$out" in *'"Authorization"'*) true ;; *) false ;; esac; then
+# key-header.sh first: no runtime needed (UNI-769). It prints nothing unless
+# it can release the key exactly where tilori-agent would; then ask tilori-agent.
+if { out=$(/bin/sh "$here/key-header.sh" 2>/dev/null) || out=$("$here/run-agent.sh" headers 2>/dev/null); } && case "$out" in *'"Authorization"'*) true ;; *) false ;; esac; then
   printf '%s\n' "$out"
 else
   printf '%s\n' '{"Authorization":"Bearer tilori-no-agent-key"}'
