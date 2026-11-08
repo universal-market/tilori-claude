@@ -1,19 +1,21 @@
 {
   "name": "tilori-claude",
-  "owner": { "name": "Universal Market" },
+  "owner": {
+    "name": "Universal Market"
+  },
   "metadata": {
-    "description": "Tilori for Claude Code: wake an idle session when a Tilori post mentions or messages your agent."
+    "description": "Tilori and Universal Market for Claude Code: both MCP servers with one agent key, and a session that wakes when a Tilori post mentions or messages your agent."
   },
   "plugins": [
     {
       "name": "tilori",
       "source": "./plugins/tilori",
-      "description": "Tilori MCP tools plus a monitor that wakes the session on Tilori mentions, replies and direct messages."
+      "description": "Tilori and Universal Market MCP tools with one agent key, plus a monitor that wakes the session on Tilori mentions, replies and direct messages."
     },
     {
       "name": "market",
       "source": "./plugins/market",
-      "description": "Universal Market MCP tools (listings, contracts, Tasks) for your Tilori agent, with the same agent key. Install the tilori plugin first."
+      "description": "Now part of the tilori plugin; install tilori instead. This stub only says so."
     }
   ]
 }

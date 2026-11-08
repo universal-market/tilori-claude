@@ -23,21 +23,24 @@ else
   echo "== needs-auth probe"; CLAUDE="$CLAUDE" sh tests/needs-auth-probe.sh
 fi
 echo "== shell";       for f in plugins/tilori/scripts/*.sh plugins/market/scripts/*.sh tests/*.sh tools/*.sh tests/wake-probe/plugin/probe.sh; do sh -n "$f"; done
-echo "== json";        for f in .claude-plugin/marketplace.json plugins/tilori/.claude-plugin/plugin.json plugins/tilori/.mcp.json plugins/tilori/monitors/monitors.json plugins/tilori/hooks/hooks.json plugins/market/.claude-plugin/plugin.json plugins/market/.mcp.json; do python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$f"; done
+echo "== json";        for f in .claude-plugin/marketplace.json plugins/tilori/.claude-plugin/plugin.json plugins/tilori/.mcp.json plugins/tilori/monitors/monitors.json plugins/tilori/hooks/hooks.json plugins/market/.claude-plugin/plugin.json plugins/market/hooks/hooks.json; do python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$f"; done
 echo "== bundle checksum"
 want=$(sed -n 's/^sha256=//p' plugins/tilori/vendor/SOURCE)
 got=$( (sha256sum plugins/tilori/vendor/tilori-agent.js 2>/dev/null || shasum -a 256 plugins/tilori/vendor/tilori-agent.js) | cut -d' ' -f1)
 [ -n "$want" ] && [ "$got" = "$want" ] || { echo "vendor/tilori-agent.js sha256 $got does not match SOURCE ($want)" >&2; exit 1; }
 echo "$got"
-echo "== market plugin copies"
-# The market plugin ships the same bundle and the same launcher scripts, and
-# moves to the same version; tools/bundle-agent.sh and release.sh keep them so.
-for f in vendor/tilori-agent.js vendor/SOURCE scripts/run-agent.sh scripts/find-agent.sh; do
-  cmp -s "plugins/tilori/$f" "plugins/market/$f" || { echo "plugins/market/$f differs from plugins/tilori/$f" >&2; exit 1; }
+echo "== market stub"
+# The market plugin is a stub since UNI-768: no MCP server, no bundle, no
+# launcher; only its notice. It still moves to the same version, so an
+# update reaches existing installs and shows the notice.
+for f in .mcp.json vendor scripts/run-agent.sh scripts/headers.sh skills; do
+  [ ! -e "plugins/market/$f" ] || { echo "plugins/market/$f exists: the market plugin is a stub now" >&2; exit 1; }
 done
 v() { sed -n 's/^  "version": "\(.*\)",$/\1/p' "plugins/$1/.claude-plugin/plugin.json"; }
 [ -n "$(v tilori)" ] && [ "$(v tilori)" = "$(v market)" ] || { echo "plugin versions differ: tilori $(v tilori), market $(v market)" >&2; exit 1; }
-echo "same bundle, scripts and version ($(v tilori))"
+out=$(sh plugins/market/scripts/notice.sh)
+python3 -c 'import json,sys; d=json.loads(sys.argv[1]); assert list(d)==["systemMessage"] and "/plugin uninstall market" in d["systemMessage"], d' "$out"
+echo "stub only, same version ($(v tilori))"
 echo "== bundle rebuild"
 if [ "${TILORI_SKIP_REBUILD:-}" = 1 ]; then
   {

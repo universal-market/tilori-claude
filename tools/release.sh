@@ -31,10 +31,13 @@ cd "$(dirname "$0")/.."
 repo=universal-market/tilori-agent
 vendor=plugins/tilori/vendor
 manifest=plugins/tilori/.claude-plugin/plugin.json
-# The market plugin, when present, ships the same bundle and moves to the
-# same version with it.
+# The market plugin, when present, moves to the same version. It ships the
+# same bundle only while it has its own MCP server (.mcp.json); since
+# UNI-768 it is a stub without one.
 market=plugins/market/.claude-plugin/plugin.json
 [ -f "$market" ] || market=
+mvendor=plugins/market/vendor
+[ -n "$market" ] && [ -f plugins/market/.mcp.json ] || mvendor=
 GH=${GH:-gh}
 BUNDLE=${BUNDLE:-sh tools/bundle-agent.sh}
 CHECK=${CHECK:-sh tests/check.sh}
@@ -70,7 +73,7 @@ if [ -n "$market" ]; then
   [ "$mcurrent" = "$current" ] || die "$market says ${mcurrent:-no version}, $manifest says $current; they move together"
 fi
 if [ -n "$(git status --porcelain)" ]; then
-  [ -n "$finish" ] && die "the working tree has changes; commit plugins/tilori/vendor${market:+ and plugins/market/vendor} (and nothing else) before --finish"
+  [ -n "$finish" ] && die "the working tree has changes; commit plugins/tilori/vendor${mvendor:+ and $mvendor} (and nothing else) before --finish"
   die "the working tree has changes; start from a clean branch"
 fi
 [ "$(git branch --show-current)" != main ] || die "on main; make a branch first"
@@ -117,7 +120,7 @@ if [ -z "$finish" ]; then
   cat <<NEXT
 
 release: bundle written and matches the release asset. Commit it, then finish:
-  git add plugins/tilori/vendor${market:+ plugins/market/vendor} && git commit -m "Bundle tilori-agent $tag"
+  git add plugins/tilori/vendor${mvendor:+ $mvendor} && git commit -m "Bundle tilori-agent $tag"
   sh tools/release.sh --finish $tag $version
 NEXT
   exit 0

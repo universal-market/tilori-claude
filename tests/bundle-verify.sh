@@ -93,8 +93,10 @@ case "$out" in *"$(printf '\033')"*) fail "duplicate tag: printed an escape" ;; 
 setup "$(printf '%s\ncommit=bundle ok: v0.1.99 @ %s (sha256, SOURCE, --verify)\n' "$ASSET" "$C")"
 refuse "duplicate commit" SOURCE "SOURCE: commit is missing, duplicated or not a 40-character sha"
 case "$out" in *"v0.1.99"*) fail "duplicate commit: printed the forged line" ;; esac
-# The market plugin's copy (UNI-748): identical and committed, or refused.
-market() { mkdir -p "$t/r/plugins/market/vendor"; cp "$t/r/plugins/tilori/vendor/"* "$t/r/plugins/market/vendor/"; }
+# A market plugin with its own MCP server carries a copy (UNI-748):
+# identical and committed, or refused. Since UNI-768 it is a stub with no
+# .mcp.json, which needs no copy.
+market() { mkdir -p "$t/r/plugins/market/vendor"; echo '{}' > "$t/r/plugins/market/.mcp.json"; cp "$t/r/plugins/tilori/vendor/"* "$t/r/plugins/market/vendor/"; }
 setup; market; (cd "$t/r" && g add -A && g commit -qm market); HEAD=$(git -C "$t/r" rev-parse HEAD)
 out=$(run) || fail "market copy: $out"
 [ "$(printf '%s\n' "$out" | tail -1)" = "bundle ok: v0.1.17 @ $HEAD (sha256, SOURCE, --verify)" ] || fail "market copy summary: $out"
@@ -102,8 +104,11 @@ setup; market; echo tampered > "$t/r/plugins/market/vendor/tilori-agent.js"; (cd
 refuse "market bundle differs" sha256 "plugins/market/vendor/tilori-agent.js differs from plugins/tilori/vendor/tilori-agent.js"
 setup; market; (cd "$t/r" && g add -A && g commit -qm market); echo x >> "$t/r/plugins/market/vendor/SOURCE"
 refuse "dirty market vendor" sha256 "uncommitted changes"
-setup; mkdir -p "$t/r/plugins/market/scripts"; touch "$t/r/plugins/market/scripts/x"; (cd "$t/r" && g add -A && g commit -qm market)
-refuse "market without a bundle" sha256 "plugins/market/vendor/tilori-agent.js differs"
+setup; mkdir -p "$t/r/plugins/market"; echo '{}' > "$t/r/plugins/market/.mcp.json"; (cd "$t/r" && g add -A && g commit -qm market)
+refuse "market MCP without a bundle" sha256 "plugins/market/vendor/tilori-agent.js differs"
+setup; mkdir -p "$t/r/plugins/market/scripts"; touch "$t/r/plugins/market/scripts/notice.sh"; (cd "$t/r" && g add -A && g commit -qm stub); HEAD=$(git -C "$t/r" rev-parse HEAD)
+out=$(run) || fail "market stub without a bundle refused: $out"
+[ "$(printf '%s\n' "$out" | tail -1)" = "bundle ok: v0.1.17 @ $HEAD (sha256, SOURCE, --verify)" ] || fail "market stub summary: $out"
 out=$(sh "$repo/tools/bundle-agent.sh" --bogus 2>&1) && fail "bad argument accepted"
 case "$out" in *"run from main"*) ;; *) fail "usage does not say run from main: $out" ;; esac
 echo "bundle-verify: ok"
