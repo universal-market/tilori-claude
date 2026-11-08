@@ -33,23 +33,26 @@ esac
 # "No agent selected." only in the first case. Its stderr is matched, never
 # shown. If key-path succeeds, policy's silence is unexplained: no hint.
 err=$("$here/run-agent.sh" key-path 2>&1 >/dev/null) && exit 0
-# The URLs the MCP servers use, in .mcp.json's order: the env override, the
-# plugin option (Claude Code passes userConfig to hooks as
-# CLAUDE_PLUGIN_OPTION_<KEY>), then plugin.json's default (UNI-773). They go
-# into the same JSON and command line as $here, so anything but a plain
-# https URL is replaced by the placeholder.
-url_or() { # $1 = candidate, $2 = placeholder
-  case "$1" in
-    https://*[!A-Za-z0-9/._:-]* | https://*..*) printf '%s' "$2" ;;
-    https://?*/mcp/*) printf '%s' "$1" ;;
-    *) printf '%s' "$2" ;;
-  esac
-}
-tilori_url=$(url_or "${TILORI_MCP_URL:-${CLAUDE_PLUGIN_OPTION_TILORI_URL:-https://tilori.ai/mcp/tilori/v1}}" '<Tilori MCP URL>')
-market_url=$(url_or "${TILORI_MARKET_URL:-${CLAUDE_PLUGIN_OPTION_MARKET_URL:-https://healthy-clownfish-904.convex.site/mcp/v1}}" '<Market MCP URL>')
+# The copyable command pre-fills only plugin.json's default URLs (UNI-773).
+# Session env, and so a project's settings, can set TILORI_MCP_URL,
+# TILORI_MARKET_URL or CLAUDE_PLUGIN_OPTION_*; a pre-filled URL from there
+# would bind the key the user types to a server they didn't choose (Bastion
+# b7ad41ff). When any of them names something else, the command keeps the
+# placeholder and a fixed sentence says so; their value is never shown.
+d_tilori=https://tilori.ai/mcp/tilori/v1
+d_market=https://healthy-clownfish-904.convex.site/mcp/v1
+tilori_url=$d_tilori market_url=$d_market other=
+for v in "${TILORI_MCP_URL:-$d_tilori}" "${CLAUDE_PLUGIN_OPTION_TILORI_URL:-$d_tilori}"; do
+  [ "$v" = "$d_tilori" ] || { tilori_url='<Tilori MCP URL>'; other=1; }
+done
+for v in "${TILORI_MARKET_URL:-$d_market}" "${CLAUDE_PLUGIN_OPTION_MARKET_URL:-$d_market}"; do
+  [ "$v" = "$d_market" ] || { market_url='<Market MCP URL>'; other=1; }
+done
+note=
+[ -z "$other" ] || note=" This session names a different Tilori or Market URL than the plugin's defaults; the user should fill in the placeholder only with a URL they set up themselves."
 case "$err" in
   *"tilori-agent: No agent selected."*)
-    msg="Tilori plugin: no Tilori agent is configured on this machine, so Tilori tools and wakes are off. If the user wants them, tell them to claim an agent at /agents/connect on Tilori and then run this in their own terminal (not through you; it asks for the key at a hidden prompt, and the key must never be pasted into this chat), with their agent's handle for <handle>: sh $here/run-agent.sh init --agent <handle> --url $tilori_url --market-url $market_url --default" ;;
+    msg="Tilori plugin: no Tilori agent is configured on this machine, so Tilori tools and wakes are off. If the user wants them, tell them to claim an agent at /agents/connect on Tilori and then run this in their own terminal (not through you; it asks for the key at a hidden prompt, and the key must never be pasted into this chat), with their agent's handle for <handle>: sh $here/run-agent.sh init --agent <handle> --url $tilori_url --market-url $market_url --default$note" ;;
   *)
     msg="Tilori plugin: the Tilori config is broken, so Tilori tools and wakes are off. ~/.config/tilori/config.json could not be used (unreadable, not 0600 in a 0700 directory, or not valid JSON), or the agent handle in it or in TILORI_AGENT is invalid. Tell the user to check it in their own terminal with: sh $here/run-agent.sh key-path (it prints the key file's path or the problem, never the key). Do not read or edit files under ~/.config/tilori yourself." ;;
 esac
