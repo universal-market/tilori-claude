@@ -6977,8 +6977,8 @@ var require_dist = __commonJS(function(exports, module) {
 
 // src/cli.ts
 import { spawn as spawn3 } from "child_process";
-import { existsSync as existsSync5, readdirSync as readdirSync3 } from "fs";
-import { join as join6 } from "path";
+import { accessSync, constants as constants4, existsSync as existsSync5, readdirSync as readdirSync3, statSync } from "fs";
+import { delimiter, isAbsolute as isAbsolute2, join as join6 } from "path";
 
 // src/activity.ts
 import { closeSync, constants, futimesSync, lstatSync as lstatSync3, openSync, readFileSync as readFileSync3, writeSync } from "fs";
@@ -7167,7 +7167,7 @@ import { existsSync as existsSync2, readdirSync, readFileSync as readFileSync2 }
 import { dirname as dirname2, join as join2 } from "path";
 
 // src/version.ts
-var VERSION = "0.1.33";
+var VERSION = "0.1.34";
 
 // src/config.ts
 var DEFAULT_WAKES_PER_HOUR = 20;
@@ -21225,7 +21225,9 @@ Usage:
       Starts Claude Code for that Tilori home (default: this one), with its
       "url" and "market_url" passed as launch flags, so the plugin's Tilori
       and Market servers point at the deployment the agent was set up on,
-      whatever the plugin's own URL options say. The home must be the
+      whatever the plugin's own URL options say. Claude Code starts in the
+      directory this was run from ($TILORI_LAUNCH_CWD when the plugin's
+      run-agent.sh passes it). The home must be the
       default one or listed in "homes" in ~/.config/tilori/config.json,
       edited by hand: every command refuses a TILORI_HOME that isn't.
   tilori-agent watch --notify-lines [--agent <handle>]
@@ -21451,7 +21453,32 @@ function requireAgent(config, a) {
   return agent;
 }
 var HOMELESS = new Set(["help", "--help", "-h"]);
-var LAUNCH_VARS = ["TILORI_HOME", "TILORI_MCP_URL", "TILORI_MARKET_URL", "TILORI_AGENT", "TILORI_SOCKET", "TILORI_URL"];
+var LAUNCH_VARS = ["TILORI_HOME", "TILORI_MCP_URL", "TILORI_MARKET_URL", "TILORI_AGENT", "TILORI_SOCKET", "TILORI_URL", "TILORI_LAUNCH_CWD"];
+function launchCwd(env = process.env, fallback = process.cwd()) {
+  const want = env.TILORI_LAUNCH_CWD;
+  if (want && isAbsolute2(want)) {
+    try {
+      if (statSync(want).isDirectory())
+        return want;
+    } catch {}
+  }
+  return fallback;
+}
+function claudeBinary(path = process.env.PATH ?? "") {
+  for (const dir of path.split(delimiter)) {
+    if (!dir || !isAbsolute2(dir))
+      continue;
+    const candidate = join6(dir, "claude");
+    try {
+      const st = statSync(candidate);
+      if (st.isFile()) {
+        accessSync(candidate, constants4.X_OK);
+        return candidate;
+      }
+    } catch {}
+  }
+  throw new Error("Could not start claude: no claude executable in an absolute PATH directory.");
+}
 async function launchClaude(args) {
   const dir = str(args, "home") || tiloriHome();
   for (const name of args.flags.keys())
@@ -21471,7 +21498,8 @@ async function launchClaude(args) {
   const inherited = { ...process.env };
   for (const k of LAUNCH_VARS)
     delete inherited[k];
-  const child = spawn3("claude", ["--settings", JSON.stringify({ env }), ...args.rest], {
+  const child = spawn3(claudeBinary(), ["--settings", JSON.stringify({ env }), ...args.rest], {
+    cwd: launchCwd(),
     stdio: "inherit",
     env: { ...inherited, ...env }
   });
@@ -22002,6 +22030,8 @@ if (import.meta.main) {
   process.exitCode = await main();
 }
 export {
+  claudeBinary,
+  launchCwd,
   main,
   parseArgs
 };
