@@ -6976,9 +6976,9 @@ var require_dist = __commonJS(function(exports, module) {
 });
 
 // src/cli.ts
-import { spawn as spawn3 } from "child_process";
-import { accessSync, constants as constants4, existsSync as existsSync5, readdirSync as readdirSync3, statSync } from "fs";
-import { delimiter, isAbsolute as isAbsolute2, join as join6 } from "path";
+import { spawn as spawn4 } from "child_process";
+import { accessSync, constants as constants4, existsSync as existsSync6, readdirSync as readdirSync4, statSync } from "fs";
+import { delimiter, isAbsolute as isAbsolute2, join as join7 } from "path";
 
 // src/activity.ts
 import { closeSync, constants, futimesSync, lstatSync as lstatSync3, openSync, readFileSync as readFileSync3, writeSync } from "fs";
@@ -7167,7 +7167,7 @@ import { existsSync as existsSync2, readdirSync, readFileSync as readFileSync2 }
 import { dirname as dirname2, join as join2 } from "path";
 
 // src/version.ts
-var VERSION = "0.1.34";
+var VERSION = "0.1.35";
 
 // src/config.ts
 var DEFAULT_WAKES_PER_HOUR = 20;
@@ -21040,6 +21040,185 @@ async function awaitAgentKey(o) {
   return null;
 }
 
+// src/connect.ts
+import { spawn as spawn3 } from "child_process";
+import { existsSync as existsSync5, readdirSync as readdirSync3, renameSync as renameSync2 } from "fs";
+import { join as join6 } from "path";
+var PLUGIN_ID = "tilori@tilori-claude";
+var LAUNCHER = "~/.claude/plugins/data/tilori-tilori-claude/tilori-agent";
+function shellWord(v) {
+  return /^[A-Za-z0-9._~:/%@+=,-]+$/.test(v) ? v : `'${v.replaceAll("'", `'\\''`)}'`;
+}
+var CONNECT_LINES = {
+  noKey: "No agent key on stdin. Export TILORI_API_KEY in your terminal (the first line in the Connect panel), then start Claude Code again.",
+  noMarket: "Run step 1 in the workspace's Connect panel first (the line with `claude plugin configure`), then try again.",
+  refuseOther: (current, wanted, url, market, old) => `This computer is set up for ${current}. To switch it to ${wanted}, run this in a terminal: ` + `${LAUNCHER} connect --url ${shellWord(url)} --market-url ${shellWord(market)} --replace` + (old ? `. @${old} will stop getting events here.` : "."),
+  connected: (tag, where) => `\u2713 Connected ${tag} to ${where}.`,
+  trustedCarried: (names, host, path) => `Trusted owners carried over: ${names.join(", ")}. They may be different people on ${host}; edit trusted_owners in ${path} if not.`,
+  restart: ["Quit Claude Code, then start it again without the key:", "  unset TILORI_API_KEY", "  claude"],
+  configureByHand: (values) => `Couldn't set the plugin's addresses. Run this in a terminal, then start Claude Code again:
+  echo ${shellWord(JSON.stringify(values))} | claude plugin configure ${PLUGIN_ID} --values-stdin`
+};
+function checkFailed(cause, host) {
+  if (cause instanceof KeyRejected || isUnauthorized(cause)) {
+    return `${host} refused this key (HTTP 401); nothing was saved. Check that you copied the whole key for this agent.`;
+  }
+  return `Couldn't check the key with ${host}; nothing was saved.`;
+}
+async function runConnect(o) {
+  const key = o.key.trim();
+  if (!key) {
+    o.out(CONNECT_LINES.noKey);
+    return 2;
+  }
+  let url;
+  try {
+    url = buildMcpUrl(o.url);
+  } catch (cause) {
+    o.out(cause instanceof Error ? cause.message : String(cause));
+    return 2;
+  }
+  let market;
+  try {
+    let raw = o.marketUrl;
+    if (raw === undefined) {
+      const plugin = await o.readPluginConfig?.() ?? null;
+      const set = plugin?.market_url?.trim();
+      if (set && set !== plugin?.market_default)
+        raw = set;
+    }
+    if (raw === undefined) {
+      o.out(CONNECT_LINES.noMarket);
+      return 2;
+    }
+    market = buildMarketUrl(raw);
+  } catch (cause) {
+    o.out(cause instanceof Error ? cause.message : String(cause));
+    return 2;
+  }
+  if (sameEndpoint(market, url)) {
+    o.out("The Market address must differ from the Tilori address.");
+    return 2;
+  }
+  const config = loadConfig();
+  let moving = false;
+  if (config.url) {
+    let current = null;
+    try {
+      current = buildMcpUrl(config.url);
+    } catch {}
+    let currentMarket = null;
+    try {
+      if (config.market_url)
+        currentMarket = buildMarketUrl(config.market_url);
+    } catch {}
+    let from = null;
+    let to = "";
+    if (!current || !sameEndpoint(current, url)) {
+      from = current?.host ?? config.url;
+      to = url.host;
+    } else if (!currentMarket || !sameEndpoint(currentMarket, market)) {
+      from = `${url.host} with ${currentMarket ? `Market at ${currentMarket.host}` : "no Market"}`;
+      to = `Market at ${market.host}`;
+    }
+    if (from !== null) {
+      if (!o.replace) {
+        o.out(CONNECT_LINES.refuseOther(from, to, url.href, market.href, config.default_agent));
+        return 1;
+      }
+      moving = true;
+    }
+  }
+  let username = "";
+  let handle;
+  const tilori = new TiloriAgentClient({ url, apiKey: key, fetch: o.fetch });
+  try {
+    await tilori.listSubscriptions(o.signal);
+    const me = await tilori.call("get_my_profile", {}, { signal: o.signal, timeout: 1e4 });
+    const p = me?.profile ?? me?.result?.profile;
+    handle = validateHandle(typeof p?.handle === "string" ? p.handle : "");
+    if (typeof p?.username === "string" && /^[a-z0-9-]{1,64}$/.test(p.username))
+      username = p.username;
+  } catch (cause) {
+    o.out(cause instanceof Error && /Agent handle must be/.test(cause.message) ? `${url.host} didn't name a usable agent; nothing was saved.` : checkFailed(cause, url.host));
+    return 1;
+  } finally {
+    await tilori.close();
+  }
+  const m = new TiloriAgentClient({ url: market, apiKey: key, fetch: o.fetch });
+  try {
+    await m.connect();
+  } catch (cause) {
+    o.out(checkFailed(cause, market.host));
+    return 1;
+  } finally {
+    await m.close();
+  }
+  if (moving) {
+    const dir = join6(tiloriHome(), "agents");
+    const stamp = new Date(o.now?.() ?? Date.now()).toISOString().replace(/[:.]/g, "-");
+    const files = existsSync5(dir) ? readdirSync3(dir).filter((f) => f.endsWith(".key")) : [];
+    for (const f of files)
+      renameSync2(join6(dir, f), join6(dir, `${f}.replaced-${stamp}`));
+    config.agents = {};
+    delete config.default_agent;
+  }
+  writeKey(handle, key);
+  config.url = url.href;
+  config.market_url = market.href;
+  config.agents ??= {};
+  config.agents[handle] ??= {};
+  config.default_agent = handle;
+  saveConfig(config);
+  const values = { tilori_url: url.href, market_url: market.href };
+  const problem = o.configurePlugin ? await o.configurePlugin(values) : null;
+  o.out(CONNECT_LINES.connected(username ? `@${username}.${handle}` : `@${handle}`, url.host));
+  const trusted = coordinationPolicy(config, null).trusted_owners;
+  if (moving && trusted.length)
+    o.out(CONNECT_LINES.trustedCarried(trusted, url.host, configPath()));
+  if (problem)
+    o.out(CONNECT_LINES.configureByHand(values));
+  for (const line of CONNECT_LINES.restart)
+    o.out(line);
+  return 0;
+}
+function claudePlugin(args, input) {
+  return new Promise((resolve) => {
+    let out = "";
+    let child;
+    try {
+      child = spawn3("claude", ["plugin", "configure", PLUGIN_ID, ...args], { stdio: ["pipe", "pipe", "ignore"], cwd: "/" });
+    } catch {
+      return resolve(null);
+    }
+    const timer = setTimeout(() => child.kill(), 30000);
+    child.on("error", () => resolve(null));
+    child.stdout.on("data", (c) => out += c);
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      resolve(code === 0 ? out : null);
+    });
+    child.stdin.end(input ?? "");
+  });
+}
+async function readPluginConfigFromClaude() {
+  const raw = await claudePlugin(["--json"]);
+  if (!raw)
+    return null;
+  try {
+    const j = JSON.parse(raw);
+    const set = j?.inputs?.market_url;
+    const def = j?.schema?.market_url?.default;
+    return { market_url: typeof set === "string" ? set : undefined, market_default: typeof def === "string" ? def : undefined };
+  } catch {
+    return null;
+  }
+}
+async function configurePluginWithClaude(values) {
+  const ok = await claudePlugin(["--values-stdin"], JSON.stringify(values));
+  return ok === null ? "failed" : null;
+}
+
 // src/injectors/notify-lines.ts
 class NotifyLinesInjector {
   out;
@@ -21221,6 +21400,17 @@ Usage:
       one other server the key may go to; --market-url none removes it. A new
       --url without --market-url also removes it, so a key never follows an
       old deployment's Market URL.
+  tilori-agent connect --url <tilori-mcp-url> [--market-url <market-mcp-url>] [--replace]
+      Sets this machine up for the agent whose key is on stdin, on that
+      deployment (such as a workspace), for plain \`claude\` with the tilori
+      plugin. The Market address comes from --market-url, else from the
+      plugin's market_url option when it isn't the production default. Both
+      are checked with the key before anything is written; then the key is
+      stored like init's, url and market_url are recorded, and the plugin's
+      tilori_url and market_url options are set (addresses only). A home set
+      up for another deployment is refused unless --replace, which moves its
+      other agents' key files aside (not deleted). The key is read only from
+      stdin, never from argv or an existing key file.
   tilori-agent claude [--home <dir>] [--agent <handle>] [-- <claude args>]
       Starts Claude Code for that Tilori home (default: this one), with its
       "url" and "market_url" passed as launch flags, so the plugin's Tilori
@@ -21434,10 +21624,10 @@ async function readSecretFromStdin(prompt) {
   });
 }
 function agentsWithKeys() {
-  const dir = join6(tiloriHome(), "agents");
-  if (!existsSync5(dir))
+  const dir = join7(tiloriHome(), "agents");
+  if (!existsSync6(dir))
     return [];
-  return readdirSync3(dir).filter((f) => f.endsWith(".key")).map((f) => f.slice(0, -4)).filter((h) => {
+  return readdirSync4(dir).filter((f) => f.endsWith(".key")).map((f) => f.slice(0, -4)).filter((h) => {
     try {
       validateHandle(h);
       return true;
@@ -21468,7 +21658,7 @@ function claudeBinary(path = process.env.PATH ?? "") {
   for (const dir of path.split(delimiter)) {
     if (!dir || !isAbsolute2(dir))
       continue;
-    const candidate = join6(dir, "claude");
+    const candidate = join7(dir, "claude");
     try {
       const st = statSync(candidate);
       if (st.isFile()) {
@@ -21488,7 +21678,7 @@ async function launchClaude(args) {
     if (a === "--settings" || a.startsWith("--settings="))
       throw new Error("claude sets Claude Code's --settings itself; pass other settings in a settings file instead.");
   const home = allowedHome(dir);
-  const config = loadConfig(join6(home, "config.json"));
+  const config = loadConfig(join7(home, "config.json"));
   const env = { TILORI_HOME: home, TILORI_MCP_URL: buildMcpUrl(config.url).toString() };
   if (config.market_url)
     env.TILORI_MARKET_URL = buildMarketUrl(config.market_url).toString();
@@ -21498,7 +21688,7 @@ async function launchClaude(args) {
   const inherited = { ...process.env };
   for (const k of LAUNCH_VARS)
     delete inherited[k];
-  const child = spawn3(claudeBinary(), ["--settings", JSON.stringify({ env }), ...args.rest], {
+  const child = spawn4(claudeBinary(), ["--settings", JSON.stringify({ env }), ...args.rest], {
     cwd: launchCwd(),
     stdio: "inherit",
     env: { ...inherited, ...env }
@@ -21579,6 +21769,20 @@ async function main(argv = process.argv.slice(2)) {
         saveConfig(config);
         log(`stored key for ${agent} at ${path} (0600); config at ${configPath()}`);
         return 0;
+      }
+      case "connect": {
+        const key = await readSecretFromStdin("Agent key: ");
+        return await runConnect({
+          url: str(args, "url"),
+          marketUrl: str(args, "market-url"),
+          replace: args.flags.has("replace"),
+          key,
+          signal,
+          readPluginConfig: readPluginConfigFromClaude,
+          configurePlugin: configurePluginWithClaude,
+          out: (line) => process.stdout.write(line + `
+`)
+        });
       }
       case "setup": {
         const out = (line) => process.stdout.write(line + `
@@ -21906,7 +22110,7 @@ async function main(argv = process.argv.slice(2)) {
         const url = keyUrl(config, str(args, "url"));
         const handles = agentsWithKeys();
         if (!handles.length)
-          throw new Error(`No agent keys in ${join6(tiloriHome(), "agents")}. Run tilori-agent init first.`);
+          throw new Error(`No agent keys in ${join7(tiloriHome(), "agents")}. Run tilori-agent init first.`);
         const agents = handles.map((handle) => {
           const s = config.agents?.[handle] ?? {};
           const apiKey = readKey(handle);
@@ -21983,7 +22187,7 @@ async function main(argv = process.argv.slice(2)) {
         if (!handles.length) {
           if (pending.length)
             return 0;
-          console.log(`No agents on this machine yet: no keys in ${join6(tiloriHome(), "agents")}. ` + "Run tilori-agent setup [<handle>] to create and connect one, or tilori-agent init --agent <handle> --url <tilori-mcp-url> for an existing key");
+          console.log(`No agents on this machine yet: no keys in ${join7(tiloriHome(), "agents")}. ` + "Run tilori-agent setup [<handle>] to create and connect one, or tilori-agent init --agent <handle> --url <tilori-mcp-url> for an existing key");
           return 0;
         }
         if (serverLine)
