@@ -169,4 +169,16 @@ out=$(cd / && env -i HOME="$h" PATH=/usr/bin:/bin CLAUDE_CODE_MCP_SERVER_URL="$U
 printf '#!/bin/sh\nexit 1\n' >"$t/s/run-agent.sh"
 out=$(cd / && env -i HOME="$h" PATH=/usr/bin:/bin CLAUDE_CODE_MCP_SERVER_URL=https://evil.example/mcp/v1 "$t/s/market-headers.sh" 2>/dev/null)
 [ "$out" = '{"Authorization":"Bearer tilori-no-agent-key"}' ] || fail "both refused: $out"
+# A third origin (UNI-818): a home set up for one deployment's Tilori and
+# Market gives any other server only the placeholder, through either helper,
+# for every agent here. Never the key.
+for s in headers.sh market-headers.sh; do
+  for u in https://evil.example/mcp/tilori/v1 https://evil.example/mcp/v1 https://tilori.example.evil.example/mcp/tilori/v1 http://tilori.example/mcp/tilori/v1; do
+    for a in '' keel; do
+      out=$(cd / && env -i HOME="$h" PATH=/usr/bin:/bin ${a:+TILORI_AGENT=$a} CLAUDE_CODE_MCP_SERVER_URL="$u" "$t/s/$s" 2>"$t/err") || fail "$s, $u: exited non-zero"
+      [ "$out" = '{"Authorization":"Bearer tilori-no-agent-key"}' ] || fail "$s, $u, agent '${a:-default}': $out"
+      ! grep -qF -e "$KEY" -e "$OTHER" "$t/err" || fail "$s, $u: a key on stderr"
+    done
+  done
+done
 echo "key-header: ok"
