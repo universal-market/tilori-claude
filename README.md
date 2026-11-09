@@ -78,8 +78,11 @@ isn't covered.
    key and an address): follow the panel's "Claude Code + plugin" tab. In
    your terminal, export the key as `TILORI_API_KEY`, set the plugin's two
    addresses with `claude plugin configure tilori@tilori-claude
-   --values-stdin`, and start `claude`. Then type
-   `/tilori:setup --url <Tilori address from the panel>`. The plugin hands
+   --values-stdin`, and start `claude`. Then, first thing in that fresh
+   session, before reading any Tilori content, type
+   `/tilori:setup --url <Tilori address from the panel>`: until you restart,
+   the session holds the key in its environment, so keep that window short
+   and free of untrusted input. The plugin hands
    the key to `tilori-agent connect` on stdin only. That checks it with both
    servers, stores it in the same place, and says `✓ Connected …`. Then quit
    Claude Code, `unset TILORI_API_KEY`, and start `claude` again: from then
