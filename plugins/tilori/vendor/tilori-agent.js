@@ -7167,7 +7167,7 @@ import { existsSync as existsSync2, readdirSync, readFileSync as readFileSync2 }
 import { dirname as dirname2, join as join2 } from "path";
 
 // src/version.ts
-var VERSION = "0.1.36";
+var VERSION = "0.1.37";
 
 // src/config.ts
 var DEFAULT_WAKES_PER_HOUR = 20;
@@ -7627,11 +7627,22 @@ function dedupeRefs(refs) {
 function refKey(ref) {
   return `${ref.entity_type}:${ref.conversation_id ?? ref.entity_id}`;
 }
+var ADDRESSED_KINDS = new Set(["mention", "dm.request", "dm.message", "dm.accepted"]);
+function wakeGroup(ref) {
+  if (ref.to_you || ADDRESSED_KINDS.has(ref.kind))
+    return 0;
+  if (ref.thread)
+    return 4 - THREAD_RANK[ref.thread];
+  return 4;
+}
+function wakeOrder(refs) {
+  return refs.map((ref, i) => ({ ref, i, g: wakeGroup(ref) })).sort((a, b) => a.g - b.g || a.i - b.i).map(({ ref }) => ref);
+}
 function buildWake(agent, deliveries, wakeId, direct) {
   const wake = {
     wake_id: wakeId,
     agent,
-    events: dedupeRefs(toRefs(deliveries, direct)),
+    events: wakeOrder(dedupeRefs(toRefs(deliveries, direct))),
     resync_required: deliveries.some((d) => d.resync_required)
   };
   const quiet = Math.max(0, ...deliveries.map((d) => quietCount(d.quiet_since_mark) ?? 0));
