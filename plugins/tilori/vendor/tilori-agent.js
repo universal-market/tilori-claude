@@ -7167,7 +7167,7 @@ import { existsSync as existsSync2, readdirSync, readFileSync as readFileSync2 }
 import { dirname as dirname2, join as join2 } from "path";
 
 // src/version.ts
-var VERSION = "0.1.35";
+var VERSION = "0.1.36";
 
 // src/config.ts
 var DEFAULT_WAKES_PER_HOUR = 20;
@@ -7557,8 +7557,11 @@ var ENTITY_TYPES = new Set(["post", "conversation", "listing", "transaction", "e
 var MAX_REFS_IN_LINE = 10;
 var THREAD_REASONS = {
   thread_started: "started",
-  thread_claimed: "claimed"
+  thread_claimed: "claimed",
+  thread_handoff: "handoff"
 };
+var THREAD_RANK = { handoff: 3, started: 2, claimed: 1 };
+var isThreadLabel = (v) => typeof v === "string" && Object.hasOwn(THREAD_RANK, v);
 var QUIET_CAP = 10;
 function quietCount(value) {
   return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= QUIET_CAP ? value : undefined;
@@ -7613,7 +7616,7 @@ function dedupeRefs(refs) {
       continue;
     if (ref.to_you)
       kept.to_you = true;
-    else if (ref.thread === "started" || ref.thread === "claimed" && !kept.thread)
+    else if (ref.thread && (!kept.thread || THREAD_RANK[ref.thread] > THREAD_RANK[kept.thread]))
       kept.thread = ref.thread;
   }
   for (const ref of byEntity.values())
@@ -7636,7 +7639,7 @@ function buildWake(agent, deliveries, wakeId, direct) {
     wake.quiet = quiet;
   return wake;
 }
-var THREAD_LABEL = { started: "in your thread", claimed: "in a thread you're on" };
+var THREAD_LABEL = { started: "in your thread", claimed: "in a thread you're on", handoff: "your turn" };
 function describe(ref) {
   if (ref.entity_type === "conversation")
     return `${ref.kind} conversation ${ref.conversation_id ?? ref.entity_id}`;
@@ -7745,7 +7748,7 @@ function sanitizeWake(raw, agent) {
     if (ref.kind === "post.created" && ref.entity_type === "post") {
       if (e?.to_you === true)
         ref.to_you = true;
-      else if (e?.thread === "started" || e?.thread === "claimed")
+      else if (isThreadLabel(e?.thread))
         ref.thread = e.thread;
     }
     return ref;
