@@ -24,6 +24,6 @@ else
   # the one next step. The URL is printed only if it carries no credentials.
   srv=${CLAUDE_CODE_MCP_SERVER_URL:-}
   case "$srv" in https://?* | http://?*) case "$srv" in *[@?#[:cntrl:][:space:]]*) srv="the Market server" ;; esac ;; *) srv="the Market server" ;; esac
-  echo "market: no key was sent to $srv, so Market will answer 401 invalid_token. Most likely this plugin's market_url differs from market_url in ~/.config/tilori/config.json, or this agent isn't set up here. The key is only ever sent to the market_url in config.json, so nothing leaked. Fix: run sh ~/.claude/plugins/data/tilori-tilori-claude/tilori-agent sync-plugin in a terminal, which sets this plugin's URL options from config.json, then restart Claude Code (or restart through the launcher: sh ~/.claude/plugins/data/tilori-tilori-claude/tilori-agent claude --agent <handle>); if config.json has no market_url, the session start note says what to add; if this agent isn't set up on this machine yet, run /tilori:setup." >&2
+  echo "market: no key was sent to $srv, so Market will answer 401 invalid_token. Most likely this plugin's market_url differs from the one in ~/.config/tilori/config.json, the only URL the key is sent to, so nothing leaked. Fix: run sh ~/.claude/plugins/data/tilori-tilori-claude/tilori-agent sync-plugin in a terminal and follow what it prints. If config.json has no market_url, the session start note says what to add; if this agent isn't set up on this machine, run /tilori:setup." >&2
 fi
 exit 0

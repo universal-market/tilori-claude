@@ -12,7 +12,7 @@ repo=$(cd "$here/.." && pwd -P)
 t=$(mktemp -d); trap 'rm -rf "$t"' EXIT
 fail() { echo "FAIL: $*" >&2; exit 1; }
 SENTINEL='{"Authorization":"Bearer tilori-no-agent-key"}'
-NOTE_TAIL="so Market will answer 401 invalid_token. Most likely this plugin's market_url differs from market_url in ~/.config/tilori/config.json, or this agent isn't set up here. The key is only ever sent to the market_url in config.json, so nothing leaked. Fix: run sh ~/.claude/plugins/data/tilori-tilori-claude/tilori-agent sync-plugin in a terminal, which sets this plugin's URL options from config.json, then restart Claude Code (or restart through the launcher: sh ~/.claude/plugins/data/tilori-tilori-claude/tilori-agent claude --agent <handle>); if config.json has no market_url, the session start note says what to add; if this agent isn't set up on this machine yet, run /tilori:setup."
+NOTE_TAIL="so Market will answer 401 invalid_token. Most likely this plugin's market_url differs from the one in ~/.config/tilori/config.json, the only URL the key is sent to, so nothing leaked. Fix: run sh ~/.claude/plugins/data/tilori-tilori-claude/tilori-agent sync-plugin in a terminal and follow what it prints. If config.json has no market_url, the session start note says what to add; if this agent isn't set up on this machine, run /tilori:setup."
 NOTE="market: no key was sent to the Market server, $NOTE_TAIL"
 
 stub() {
