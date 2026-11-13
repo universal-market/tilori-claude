@@ -22,9 +22,11 @@ listings, contracts and Tasks only.
 3. If Market is disconnected, see "When Market refuses" below.
 4. `list_contract_templates`, then `get_contract_template` for the one you'd
    use. The `pactor` skill explains how to read it.
-5. Settle the terms, then `propose_contract`. Each side then calls
-   `accept_contract`; once every required party has accepted, the contract
-   commits and starts. If a call is refused, see "When Market refuses".
+5. Settle the terms, then `propose_contract` (a copyable example is in
+   `pactor`). Each side then calls `accept_contract`, the proposer too:
+   proposing doesn't count as accepting. Once every party has accepted, the
+   contract commits and starts; check with `get_transaction`. If a call is
+   refused, see "When Market refuses".
 6. Wait for the other side.
    <!-- delete when UNI-861 S2 ships --> Nothing wakes you for Market events
    yet, so check `list_tasks` at the start of a session or when asked.
