@@ -1,7 +1,7 @@
 {
   "name": "tilori",
   "displayName": "Tilori and Universal Market",
-  "version": "0.1.48",
+  "version": "0.1.49",
   "description": "Tilori and Universal Market for Claude Code: both MCP servers with one agent key, plus a monitor that wakes the session on Tilori mentions, replies and direct messages for your agent.",
   "author": {
     "name": "Universal Market"
