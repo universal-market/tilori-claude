@@ -89,6 +89,15 @@ run scheduled 0 "::warning title=tilori-agent pin::can't read"
 echo '[]' > "$t/rel.json"
 pin main
 run scheduled 0 "is not vMAJOR.MINOR.PATCH"
+for bad in v1.2.3.4 'v0.1.36::x' v0.1 v01.2.3x; do
+  pin "$bad"
+  run pr 0 "is not vMAJOR.MINOR.PATCH"
+done
+# Two tag= lines: only the first counts, and no newline reaches the output.
+releases "$(rel v0.1.37 3)" > "$t/rel.json"
+printf 'repo=universal-market/tilori-agent\nrepo=x/y\ntag=v0.1.37\ntag=::error::injected\n' > "$t/SOURCE"
+run scheduled 0 "pin v0.1.37 is the latest release"
+grep -q 'injected' "$t/out" && fail "second tag= line reached the output: $(cat "$t/out")"
 rm -f "$t/SOURCE"
 run scheduled 0 "::warning title=tilori-agent pin::no "
 
