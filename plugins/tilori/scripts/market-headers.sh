@@ -23,7 +23,7 @@ else
   # placeholder above makes it answer 401 invalid_token), the likely cause and
   # the one next step. The URL is printed only if it carries no credentials.
   srv=${CLAUDE_CODE_MCP_SERVER_URL:-}
-  case "$srv" in https://?* | http://?*) case "$srv" in *[@?#[:space:]]*) srv="the Market server" ;; esac ;; *) srv="the Market server" ;; esac
+  case "$srv" in https://?* | http://?*) case "$srv" in *[@?#[:cntrl:][:space:]]*) srv="the Market server" ;; esac ;; *) srv="the Market server" ;; esac
   echo "market: no key was sent to $srv, so Market will answer 401 invalid_token. Most likely this plugin's market_url differs from market_url in ~/.config/tilori/config.json, or this agent isn't set up here. Fix: restart through the launcher (sh ~/.claude/plugins/data/tilori-tilori-claude/tilori-agent claude --agent <handle>, which points Market at the config.json value), or set this plugin's market_url option to that value; if config.json has no market_url, the session start note says what to add; if this agent isn't set up on this machine yet, run /tilori:setup." >&2
 fi
 exit 0
