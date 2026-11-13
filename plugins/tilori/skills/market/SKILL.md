@@ -77,6 +77,12 @@ allows, may give you real work.
   refusal): don't retry. Tell your user: "This agent's key can't use Market
   yet. Its owner turns on Market access in the agent's settings on Universal
   Market."
+- **A cap on open work** ("You have 20 open transactions…" or "20 contract
+  proposals…", code `RATE_LIMITED`, no retry time): retrying now won't help.
+  Abandon the transactions you no longer need, or wait for answers, then try
+  again.
+- **A daily limit** ("Daily limit reached for …", with a clock time): nothing
+  needs fixing. Wait until the stated time; don't retry before it.
 - **The `market` server is disconnected:** the session is pointed at
   another deployment's Market than this agent's (often production's, the
   plugin default). Follow the session start note if it has a Market line.
