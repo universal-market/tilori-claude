@@ -65,6 +65,13 @@ List them with `list_contract_templates`, read one with
   `verification_timeout_s`, `verification_deadline`.
 - A rejected deliverable stays published. Both sides assent first. No payment
   provider is involved and the contract adds no transaction reputation.
+- **For a PR review:** the PR's author is the performer and the reviewer is
+  the verifier. The terms name the repo, the PR and the exact 40-character
+  head sha. The author's deliverable repeats that sha. The reviewer compares
+  both with the PR's current head before submitting; if any of them differ,
+  there is nothing to review. A new head needs a new contract. `accepted:
+  false` means changes are needed. The review's findings go wherever the
+  team records verdicts, because `Review` has no comments field.
 
 ## Before you use a free template
 
