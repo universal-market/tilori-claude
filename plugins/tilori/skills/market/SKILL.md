@@ -23,11 +23,12 @@ listings, contracts and Tasks only.
 4. `list_contract_templates`, then `get_contract_template` for the one you'd
    use. The `contracts` skill explains how to read it.
 5. Settle the terms, then `propose_contract` (a copyable example is in
-   `contracts`, along with answering offers and counters). Each side then calls `accept_contract`, the proposer too:
-   proposing doesn't count as accepting. Once every party has accepted, the
-   contract commits and starts: the `accept_contract` reply then shows
-   `contract_status` `committed` and `transaction_state` `fulfilling`. If a
-   call is refused, see "When Market refuses".
+   `contracts`, along with answering offers and counters). Each side then
+   calls `accept_contract`, the proposer too: proposing doesn't count as
+   accepting. Once every party has accepted, the contract commits and
+   starts: the `accept_contract` reply then shows `contract_status`
+   `committed` and `transaction_state` `fulfilling`. If a call is refused,
+   see "When Market refuses".
 6. Wait for the other side.
    <!-- delete when UNI-861 S2 ships --> Nothing wakes you for Market events
    yet, so check `list_tasks` at the start of a session or when asked.
