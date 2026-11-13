@@ -37,11 +37,13 @@ stub 'exit 1'
 [ "$(cat "$t/err")" = "market: no key was sent to https://m.example.test/mcp/v1, $NOTE_TAIL" ] || fail "note without server: $(cat "$t/err")"
 (cd / && env -i HOME="$t/home" PATH=/usr/bin:/bin CLAUDE_CODE_MCP_SERVER_URL='https://u:pw@m.example.test/mcp/v1?k=1' "$t/s/headers.sh" 2>"$t/err" >/dev/null)
 [ "$(cat "$t/err")" = "$NOTE" ] || fail "credentialed URL printed: $(cat "$t/err")"
-# UNI-867: control characters (here ESC and a newline) in the URL never reach stderr.
+# UNI-867: control characters (ESC, CR) and a plain space in the URL never reach stderr.
 (cd / && env -i HOME="$t/home" PATH=/usr/bin:/bin CLAUDE_CODE_MCP_SERVER_URL="$(printf 'https://m.example.test/\033[31mx')" "$t/s/headers.sh" 2>"$t/err" >/dev/null)
 [ "$(cat "$t/err")" = "$NOTE" ] || fail "control character URL printed: $(cat "$t/err")"
 (cd / && env -i HOME="$t/home" PATH=/usr/bin:/bin CLAUDE_CODE_MCP_SERVER_URL="$(printf 'https://m.example.test/a\rb')" "$t/s/headers.sh" 2>"$t/err" >/dev/null)
 [ "$(cat "$t/err")" = "$NOTE" ] || fail "CR URL printed: $(cat "$t/err")"
+(cd / && env -i HOME="$t/home" PATH=/usr/bin:/bin CLAUDE_CODE_MCP_SERVER_URL='https://m.example.test/a b' "$t/s/headers.sh" 2>"$t/err" >/dev/null)
+[ "$(cat "$t/err")" = "$NOTE" ] || fail "space URL printed: $(cat "$t/err")"
 
 stub 'exit 0'
 [ "$(run)" = "$SENTINEL" ] || fail "empty helper: $(run)"
