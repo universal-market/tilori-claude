@@ -205,6 +205,9 @@ vrun 0.1.10; vnames 0.1.10   # newer moves forward (numeric, not lexical)
 vrun 0.1.9;  vnames 0.1.10   # older does not move it back
 vrun 0.2.0;  vnames 0.2.0
 vrun 0.1.10; vnames 0.2.0
+chmod 666 "$t/vdata/tilori-agent"             # loose launcher: repaired even if newer
+vrun 0.1.10; vnames 0.2.0
+case "$(ls -l "$t/vdata/tilori-agent")" in -rwxr-xr-x*) ;; *) fail "launcher: loose newer launcher not repaired to 755: $(ls -l "$t/vdata/tilori-agent")" ;; esac
 rm -f "$t/cache/0.2.0/scripts/run-agent.sh"   # named version removed: rewrite
 vrun 0.1.10; vnames 0.1.10
 # A new data directory is created private (umask 077).

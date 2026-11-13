@@ -49,7 +49,8 @@ content=$(
 # would otherwise repoint the service at old code (UNI-800). If the launcher
 # already names a sibling version directory that still has run-agent.sh and is
 # newer than this one, leave it alone. Anything else (unreadable, unparseable,
-# missing target, other parent, non-numeric version) is rewritten as before.
+# missing target, other parent, non-numeric version, loose permissions) is
+# rewritten as before.
 if [ -f "$data/tilori-agent" ] && [ ! -L "$data/tilori-agent" ] && [ -O "$data/tilori-agent" ]; then
   cur=$(sed -n 's|^CLAUDE_PLUGIN_DATA=[^ ]* exec /bin/sh \(/[^ ]*\)/run-agent\.sh "\$@"$|\1|p' "$data/tilori-agent" 2>/dev/null | head -n 1)
   # $cur and $here are scripts directories; the version directory is the parent.
@@ -70,7 +71,10 @@ if [ -f "$data/tilori-agent" ] && [ ! -L "$data/tilori-agent" ] && [ -O "$data/t
         case "$b" in *.*) b=${b#*.} ;; *) b= ;; esac
       done
     }
-    if newer "${curdir##*/}" "${mydir##*/}"; then exit 0; fi
+    # Only when the launcher is also not group/world-writable (a find failure
+    # counts as loose); otherwise fall through so it is rewritten at mode 755.
+    loose=$(find "$data/tilori-agent" -prune \( -perm -0020 -o -perm -0002 \) -print 2>/dev/null) || loose=x
+    if [ -z "$loose" ] && newer "${curdir##*/}" "${mydir##*/}"; then exit 0; fi
   fi
 fi
 # Unchanged: leave the file (and its inode) alone, but only if it is a
