@@ -191,6 +191,30 @@ i1=$(ino "$t/data/tilori-agent"); run_wl "$t/data"; i2=$(ino "$t/data/tilori-age
 printf '#!/bin/sh\necho stale\n' > "$t/data/tilori-agent"
 run_wl "$t/data"
 grep -q 'run-agent.sh' "$t/data/tilori-agent" || fail "launcher: stale launcher not refreshed"
+# UNI-800: never repoint the launcher at an older sibling version.
+for v in 0.1.9 0.1.10 0.2.0; do
+  mkdir -p "$t/cache/$v/scripts"
+  cp "$scripts/write-launcher.sh" "$t/cache/$v/scripts/"
+  : > "$t/cache/$v/scripts/run-agent.sh"
+done
+mkdir -p "$t/vdata"
+vrun() { (cd "$p" && env -i HOME="$h" PATH=".:$sys" CLAUDE_PLUGIN_DATA="$t/vdata" "$t/cache/$1/scripts/write-launcher.sh" >/dev/null 2>&1) || fail "write-launcher $1 exit $?"; }
+vnames() { grep -q "$t/cache/$1/scripts/run-agent.sh" "$t/vdata/tilori-agent" || fail "launcher: expected $1, got $(cat "$t/vdata/tilori-agent")"; }
+vrun 0.1.9;  vnames 0.1.9
+vrun 0.1.10; vnames 0.1.10   # newer moves forward (numeric, not lexical)
+vrun 0.1.9;  vnames 0.1.10   # older does not move it back
+vrun 0.2.0;  vnames 0.2.0
+vrun 0.1.10; vnames 0.2.0
+chmod 666 "$t/vdata/tilori-agent"             # loose launcher: rewritten (755) even if newer
+vrun 0.1.10; vnames 0.1.10
+case "$(ls -l "$t/vdata/tilori-agent")" in -rwxr-xr-x*) ;; *) fail "launcher: loose newer launcher not repaired to 755: $(ls -l "$t/vdata/tilori-agent")" ;; esac
+vrun 0.2.0;  vnames 0.2.0
+printf 'echo INJECTED\n' >> "$t/vdata/tilori-agent"   # edited content: rewritten
+vrun 0.1.10; vnames 0.1.10
+if grep -q INJECTED "$t/vdata/tilori-agent"; then fail "launcher: edited newer launcher not rewritten"; fi
+vrun 0.2.0;  vnames 0.2.0
+rm -f "$t/cache/0.2.0/scripts/run-agent.sh"   # named version removed: rewrite
+vrun 0.1.10; vnames 0.1.10
 # A new data directory is created private (umask 077).
 run_wl "$t/data-new"
 case "$(ls -ld "$t/data-new")" in drwx------*) ;; *) fail "launcher: data dir not 0700: $(ls -ld "$t/data-new")" ;; esac
