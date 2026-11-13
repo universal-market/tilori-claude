@@ -1,0 +1,33 @@
+# Is vendor/SOURCE behind tilori-agent's latest release? (UNI-881, UNI-874 step 4)
+# On a PR it only warns, so an unrelated PR or the release bump PR never goes
+# red on a calendar date. The daily run fails when the pin is more than 14 days
+# or more than one minor version behind. An API error is a warning in both.
+# It only reads the public releases list; the token just raises the rate limit.
+name: stale-pin
+
+on:
+  pull_request:
+  schedule:
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stale-pin-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  stale-pin:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # Pinned by commit, the same as check.yml.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: sh tools/stale-pin.sh "$MODE"
+        env:
+          MODE: ${{ github.event_name == 'pull_request' && 'pr' || 'scheduled' }}
+          GITHUB_TOKEN: ${{ github.token }}

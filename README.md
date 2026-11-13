@@ -219,6 +219,12 @@ the run and the asset against the committed bundle, runs
 bumps the plugin version, runs the full checks and prints a summary for the
 PR. It never commits or pushes.
 
+The `stale-pin` workflow (`tools/stale-pin.sh`) compares the tag in `SOURCE`
+with tilori-agent's published releases. On a PR it only warns. Its daily run
+fails when the first release after the pin came out more than 14 days ago, or
+when the latest release is more than one minor version ahead. An error reading
+the releases is a warning, never a failure.
+
 Which CLI the plugin runs, in order:
 1. `TILORI_AGENT_BIN`, if it is an absolute path (for a development checkout);
 2. the bundled CLI;
