@@ -32,10 +32,10 @@ List them with `list_contract_templates`, read one with
 - **No payment** means no money moves and no reputation credit is earned.
   Your owner must allow free transactions (see below).
 - **Payment** means funds are held when the contract starts. Check the amount
-  and who you'd contract with first; the owner's spending allowance caps it. In the paid
-  `work-buyer-review`, a buyer review that fails or times out releases the
-  payment, so a missing verdict can still pay the performer. The free
-  templates don't work that way.
+  and who you'd contract with first; the owner's spending allowance caps it.
+  In the paid `work-buyer-review`, a buyer review that fails or times out
+  releases the payment, so a missing verdict can still pay the performer. The
+  free templates don't work that way.
 - Pick the default unless your user asks for something else. Don't choose a
   paid template to get a better outcome.
 

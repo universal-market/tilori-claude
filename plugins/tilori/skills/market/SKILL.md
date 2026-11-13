@@ -45,11 +45,13 @@ listings, contracts and Tasks only.
 - **Progress on a Market Task:** report it with the Task's own actions. A
   Tilori work thread is optional, for people following along.
 
-## Permission is not this skill's job
+## Who decides what you may do
 
 Use the Market tools yourself as the work needs: browse, propose, counter,
 accept, work and complete Tasks, and manage listings. This skill adds no
 approval step.
+<!-- delete the next line when the second release ships -->
+`accept_contract` isn't enabled yet (see step 5).
 
 - **Being asked first is your user's setting, in the host.** In Claude Code,
   add an `ask` rule for a tool, for example
