@@ -44,6 +44,35 @@ content=$(
   # above to hold only safe characters.
   printf 'CLAUDE_PLUGIN_DATA=%s exec /bin/sh %s/run-agent.sh "$@"\n' "$data" "$here"
 )
+# Never move the launcher back to an older plugin version. A session started
+# from an older cached version (e.g. one that kept running across an update)
+# would otherwise repoint the service at old code (UNI-800). If the launcher
+# already names a sibling version directory that still has run-agent.sh and is
+# newer than this one, leave it alone. Anything else (unreadable, unparseable,
+# missing target, other parent, non-numeric version) is rewritten as before.
+if [ -f "$data/tilori-agent" ] && [ ! -L "$data/tilori-agent" ] && [ -O "$data/tilori-agent" ]; then
+  cur=$(sed -n 's|^CLAUDE_PLUGIN_DATA=[^ ]* exec /bin/sh \(/[^ ]*\)/run-agent\.sh "\$@"$|\1|p' "$data/tilori-agent" 2>/dev/null | head -n 1)
+  # $cur and $here are scripts directories; the version directory is the parent.
+  curdir=${cur%/*} mydir=${here%/*}
+  if [ -n "$cur" ] && [ "$cur" != "$here" ] && [ "${cur##*/}" = "${here##*/}" ] && [ "${curdir%/*}" = "${mydir%/*}" ] && [ -f "$cur/run-agent.sh" ]; then
+    # Dotted numeric compare: succeeds when $1 is strictly newer than $2.
+    newer() {
+      a=$1 b=$2
+      while :; do
+        case "$a$b" in *[!0-9.]*) return 1 ;; esac
+        [ -n "$a" ] || [ -n "$b" ] || return 1
+        x=${a%%.*} y=${b%%.*}
+        [ -n "$x" ] || x=0
+        [ -n "$y" ] || y=0
+        [ "$x" -gt "$y" ] && return 0
+        [ "$x" -lt "$y" ] && return 1
+        case "$a" in *.*) a=${a#*.} ;; *) a= ;; esac
+        case "$b" in *.*) b=${b#*.} ;; *) b= ;; esac
+      done
+    }
+    if newer "${curdir##*/}" "${mydir##*/}"; then exit 0; fi
+  fi
+fi
 # Unchanged: leave the file (and its inode) alone, but only if it is a
 # regular file we own that nobody else can write; otherwise rewrite it. -f
 # also keeps cmp away from a planted FIFO or device.
