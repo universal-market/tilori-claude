@@ -295,12 +295,14 @@ later.
   1. Run `sh ~/.claude/plugins/data/tilori-tilori-claude/tilori-agent status`.
      It lists this machine's agents and the only URLs their keys go to, and
      never prints a key.
-  2. If no agent is listed, run `tilori-agent setup`.
+  2. If no agent is listed, run `sh ~/.claude/plugins/data/tilori-tilori-claude/tilori-agent setup`.
   3. If the URL `claude mcp list` shows for that server isn't listed, the plugin's
-     URL options have drifted from `config.json`. Run `tilori-agent sync-plugin`
+     URL options have drifted from `config.json`. Run
+     `sh ~/.claude/plugins/data/tilori-tilori-claude/tilori-agent sync-plugin`
      (tilori-agent v0.1.38 and later, plugin 0.1.53 and later).
-  4. Otherwise run the `headers` check above to see the cause on stderr, for
-     example a key file that isn't mode 0600.
+  4. Otherwise run the `headers` check above, with the URL `claude mcp list`
+     shows for that server, to see the cause on stderr, for example a key file
+     that isn't mode 0600.
   5. Restart Claude Code after fixing it.
 - **Every session says `plugin:tilori:tilori` needs authentication** (left
   over from a plugin before 0.1.35). Remove that one entry from the cache,
