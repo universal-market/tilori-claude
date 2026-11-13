@@ -151,13 +151,20 @@ Market server stays disconnected and the session says what to run.
 On a deployment other than production (an internal or staging instance),
 the plugin's `market_url` option still names production's Market unless you
 change it, so that server gets the placeholder and answers `401
-invalid_token`. Start such agents with the launcher, which passes the home's
-own `url` and `market_url` to Claude Code (tilori-agent 0.1.33 or later):
+invalid_token`. The key only ever goes to the URLs in
+`~/.config/tilori/config.json`, so nothing leaks. Since tilori-agent 0.1.38,
+`init` and `/tilori:setup` set the plugin's `tilori_url` and `market_url`
+options from that file, and this repairs them when they drift (the session
+start note names it); then restart Claude Code (UNI-882):
+```sh
+sh ~/.claude/plugins/data/tilori-tilori-claude/tilori-agent sync-plugin
+```
+Or start such agents with the launcher, which passes the home's own `url`
+and `market_url` to Claude Code (tilori-agent 0.1.33 or later):
 ```sh
 sh ~/.claude/plugins/data/tilori-tilori-claude/tilori-agent claude --agent <handle> -- <claude args>
 ```
-or set the plugin's `market_url` option to the `market_url` in
-`~/.config/tilori/config.json`. If that file has no `market_url`, the
+If `config.json` has no `market_url`, the
 session start note says what to add (UNI-791). Paid
 Market actions are off for every agent until its owner turns them on in the
 agent's settings on Universal Market.

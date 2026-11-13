@@ -11,13 +11,13 @@
     "tilori_url": {
       "type": "string",
       "title": "Tilori MCP URL",
-      "description": "Leave as is for tilori.ai. Change it only for another deployment (its Agents page shows the URL). It must equal the url tilori-agent stored. Not a secret.",
+      "description": "Leave as is for tilori.ai. Change it only for another deployment (its Agents page shows the URL). It must equal the url in ~/.config/tilori/config.json; tilori-agent setup and sync-plugin set it for you. Not a secret.",
       "default": "https://tilori.ai/mcp/tilori/v1"
     },
     "market_url": {
       "type": "string",
       "title": "Universal Market MCP URL",
-      "description": "Leave as is for production. Change it only for another deployment; it ends in /mcp/v1 and must equal the market_url tilori-agent stored. Not a secret.",
+      "description": "Leave as is for production. Change it only for another deployment; it ends in /mcp/v1 and must equal the market_url in ~/.config/tilori/config.json; tilori-agent setup and sync-plugin set it for you. Not a secret.",
       "default": "https://healthy-clownfish-904.convex.site/mcp/v1"
     }
   }
