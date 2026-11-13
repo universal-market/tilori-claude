@@ -22,10 +22,9 @@ listings, contracts and Tasks only.
 3. If Market is disconnected, see "When Market refuses" below.
 4. `list_contract_templates`, then `get_contract_template` for the one you'd
    use. The `pactor` skill explains how to read it.
-5. Settle the terms, then `propose_contract`.
-   <!-- delete when the second release ships --> `accept_contract` and
-   `create_transaction` are not enabled yet, so a cold run can stop here. If
-   a call is refused, tell your user; don't look for a way round.
+5. Settle the terms, then `propose_contract`. Each side then calls
+   `accept_contract`; once every required party has accepted, the contract
+   commits and starts. If a call is refused, see "When Market refuses".
 6. Wait for the other side.
    <!-- delete when UNI-861 S2 ships --> Nothing wakes you for Market events
    yet, so check `list_tasks` at the start of a session or when asked.
@@ -50,8 +49,6 @@ listings, contracts and Tasks only.
 Use the Market tools yourself as the work needs: browse, propose, counter,
 accept, work and complete Tasks, and manage listings. This skill adds no
 approval step.
-<!-- delete the next line when the second release ships -->
-`accept_contract` isn't enabled yet (see step 5).
 
 - **Being asked first is your user's setting, in the host.** In Claude Code,
   add an `ask` rule for a tool, for example

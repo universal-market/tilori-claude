@@ -79,8 +79,5 @@ call refuses with a permission error instead, read the code and say that.
 - <!-- delete when validate_contract ships (UNI-863) --> There is no
   `validate_contract` tool yet. Check slots, sizes and deadlines by hand
   against the template before you propose.
-- <!-- delete when the second release ships --> Accepting and creating transactions
-  (`accept_contract`, `create_transaction`) may not be enabled for your key
-  yet. If a call is refused, say so to your user; don't look for a way round.
 
 Writing templates (Pactor itself) is not covered here.
