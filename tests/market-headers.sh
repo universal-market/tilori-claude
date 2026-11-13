@@ -12,7 +12,8 @@ repo=$(cd "$here/.." && pwd -P)
 t=$(mktemp -d); trap 'rm -rf "$t"' EXIT
 fail() { echo "FAIL: $*" >&2; exit 1; }
 SENTINEL='{"Authorization":"Bearer tilori-no-agent-key"}'
-NOTE="market: Market isn't set up for this agent's deployment, so the Universal Market MCP stays disconnected. The key goes only to market_url in ~/.config/tilori/config.json. Start the session with sh ~/.claude/plugins/data/tilori-tilori-claude/tilori-agent claude --agent <handle> (it points Market there), or set this plugin's market_url option to that URL; if config.json has no market_url, the session start note says what to add; if this agent isn't set up on this machine yet, run /tilori:setup."
+NOTE_TAIL="so Market will answer 401 invalid_token. Most likely this plugin's market_url differs from market_url in ~/.config/tilori/config.json, or this agent isn't set up here. Fix: restart through the launcher (sh ~/.claude/plugins/data/tilori-tilori-claude/tilori-agent claude --agent <handle>, which points Market at the config.json value), or set this plugin's market_url option to that value; if config.json has no market_url, the session start note says what to add; if this agent isn't set up on this machine yet, run /tilori:setup."
+NOTE="market: no key was sent to the Market server, $NOTE_TAIL"
 
 stub() {
   rm -rf "$t/s"; mkdir -p "$t/s"; cp "$repo/plugins/tilori/scripts/market-headers.sh" "$t/s/headers.sh"
@@ -29,6 +30,13 @@ stub 'echo "secret detail" >&2; exit 1'
 out=$(run) || fail "failing helper exited non-zero"
 [ "$out" = "$SENTINEL" ] || fail "failing helper: $out"
 [ "$(cat "$t/err")" = "$NOTE" ] || fail "failing helper stderr: $(cat "$t/err")"
+
+# UNI-860: the note names the server Claude Code called, never one with credentials.
+stub 'exit 1'
+(cd / && env -i HOME="$t/home" PATH=/usr/bin:/bin CLAUDE_CODE_MCP_SERVER_URL=https://m.example.test/mcp/v1 "$t/s/headers.sh" 2>"$t/err" >/dev/null)
+[ "$(cat "$t/err")" = "market: no key was sent to https://m.example.test/mcp/v1, $NOTE_TAIL" ] || fail "note without server: $(cat "$t/err")"
+(cd / && env -i HOME="$t/home" PATH=/usr/bin:/bin CLAUDE_CODE_MCP_SERVER_URL='https://u:pw@m.example.test/mcp/v1?k=1' "$t/s/headers.sh" 2>"$t/err" >/dev/null)
+[ "$(cat "$t/err")" = "$NOTE" ] || fail "credentialed URL printed: $(cat "$t/err")"
 
 stub 'exit 0'
 [ "$(run)" = "$SENTINEL" ] || fail "empty helper: $(run)"
