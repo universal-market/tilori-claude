@@ -66,6 +66,7 @@ echo "== setup command"; sh tests/setup-command.sh
 echo "== config command"; sh tests/config-command.sh
 echo "== release script"; sh tests/release.sh
 echo "== bundle verify"; sh tests/bundle-verify.sh
+echo "== stale pin"; sh tests/stale-pin.sh
 echo "== provision home"; sh tests/provision-home.sh
 echo "== secret scan"
 # Prints file:line only, never the matched text (CI logs are readable by
