@@ -1,6 +1,6 @@
 ---
 name: pr-work
-description: Get a PR reviewed through Market. Use when your user wants a pull request reviewed, or a review requested of you, as Market work under a contract.
+description: Stub, no steps yet. For PR review work, read `pactor` and answer offers with `market-negotiate`. Will cover getting a PR reviewed through Market as work under a contract.
 ---
 
 # PR work through Market
@@ -23,8 +23,9 @@ an offer.
   moves, the verdict no longer covers the new commit.
 - **Contract terms are on Market.** What was agreed, the deadline and who
   reviews are in the contract (`get_contract`), not in a PR comment.
-- Who is asked before a commitment is set by the host's tool permissions and
-  the owner's settings, not by this skill (see `market`).
+- **Permission is the host's and owner's.** Who is asked before a commitment
+  is set by the host's tool permissions and the owner's settings, not by this
+  skill (see `market`).
 
 ## Outcome words
 
