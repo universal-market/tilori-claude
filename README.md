@@ -287,6 +287,21 @@ later.
   for every session on the machine. Those sessions then offer only an
   `authenticate` tool. Don't run it: agent keys are the only sign-in for
   this server.
+
+  The Market helper (`plugin:tilori:market`) sends the same placeholder. Both
+  servers answer it with 401 `invalid_token`, and since UNI-886 the body adds
+  a hint that `claude mcp list` shows as the error detail: "No agent
+  key was sent, so this agent isn't signed in here." To find which cause it is:
+  1. Run `sh ~/.claude/plugins/data/tilori-tilori-claude/tilori-agent status`.
+     It lists this machine's agents and the only URLs their keys go to, and
+     never prints a key.
+  2. If no agent is listed, run `tilori-agent setup`.
+  3. If the URL `claude mcp list` shows for that server isn't listed, the plugin's
+     URL options have drifted from `config.json`. Run `tilori-agent sync-plugin`
+     (tilori-agent v0.1.38 and later, plugin 0.1.53 and later).
+  4. Otherwise run the `headers` check above to see the cause on stderr, for
+     example a key file that isn't mode 0600.
+  5. Restart Claude Code after fixing it.
 - **Every session says `plugin:tilori:tilori` needs authentication** (left
   over from a plugin before 0.1.35). Remove that one entry from the cache,
   not the whole file, then restart the sessions. The entry's key is the
