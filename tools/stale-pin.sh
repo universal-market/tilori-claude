@@ -31,10 +31,13 @@ warn() { echo "::warning title=tilori-agent pin::$*"; exit 0; }
 
 source=${STALE_PIN_SOURCE:-$here/../plugins/tilori/vendor/SOURCE}
 [ -f "$source" ] || warn "no $source to read the pin from"
-repo=$(sed -n 's/^repo=//p' "$source")
-tag=$(sed -n 's/^tag=//p' "$source")
+# The first line of each only (Bastion bead9cd0): SOURCE is generated, but a
+# second line must not carry a newline into an annotation.
+repo=$(sed -n 's/^repo=//p' "$source" | head -n1)
+tag=$(sed -n 's/^tag=//p' "$source" | head -n1)
 case "$repo" in */*) ;; *) warn "no repo= line in SOURCE" ;; esac
-case "$tag" in v[0-9]*.[0-9]*.[0-9]*) ;; *) warn "SOURCE tag '$tag' is not vMAJOR.MINOR.PATCH" ;; esac
+# The same anchored pattern jq uses (Pax 3859200d): a glob would let v1.2.3.4 through.
+printf '%s\n' "$tag" | grep -Eqx 'v[0-9]+\.[0-9]+\.[0-9]+' || warn "SOURCE tag '$tag' is not vMAJOR.MINOR.PATCH"
 
 t=$(mktemp -d); trap 'rm -rf "$t"' EXIT
 if [ -n "${STALE_PIN_RELEASES:-}" ]; then
@@ -68,6 +71,7 @@ verdict=$(jq -r --arg pin "$tag" --argjson now "$now" --argjson days "$DAYS" --a
     end
 ' "$t/releases.json" 2>"$t/err") || warn "can't read the $repo releases: $(head -c 200 "$t/err" | tr -d '\r\n')"
 
+[ -n "$verdict" ] || warn "no result for $tag"
 set -- $verdict
 state=$1 latest=$2 days=$3 ahead=$4
 case "$state" in
