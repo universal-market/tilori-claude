@@ -209,6 +209,10 @@ chmod 666 "$t/vdata/tilori-agent"             # loose launcher: rewritten (755) 
 vrun 0.1.10; vnames 0.1.10
 case "$(ls -l "$t/vdata/tilori-agent")" in -rwxr-xr-x*) ;; *) fail "launcher: loose newer launcher not repaired to 755: $(ls -l "$t/vdata/tilori-agent")" ;; esac
 vrun 0.2.0;  vnames 0.2.0
+printf 'echo INJECTED\n' >> "$t/vdata/tilori-agent"   # edited content: rewritten
+vrun 0.1.10; vnames 0.1.10
+if grep -q INJECTED "$t/vdata/tilori-agent"; then fail "launcher: edited newer launcher not rewritten"; fi
+vrun 0.2.0;  vnames 0.2.0
 rm -f "$t/cache/0.2.0/scripts/run-agent.sh"   # named version removed: rewrite
 vrun 0.1.10; vnames 0.1.10
 # A new data directory is created private (umask 077).
