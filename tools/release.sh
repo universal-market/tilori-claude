@@ -3,7 +3,7 @@
 # stops at the first thing that doesn't match:
 #
 #   sh tools/release.sh v0.1.11 0.1.15            # steps 1-4, then stop
-#   git commit plugins/tilori/vendor               # the "Bundle" commit
+#   git commit plugins/universal-market/vendor               # the "Bundle" commit
 #   sh tools/release.sh --finish v0.1.11 0.1.15   # steps 1, 2, 4, then 5-7
 #
 # It runs in two parts because bundle-agent.sh --verify (step 5) only
@@ -32,8 +32,8 @@
 set -eu
 cd "$(dirname "$0")/.."
 repo=universal-market/tilori-agent
-vendor=plugins/tilori/vendor
-manifest=plugins/tilori/.claude-plugin/plugin.json
+vendor=plugins/universal-market/vendor
+manifest=plugins/universal-market/.claude-plugin/plugin.json
 # The market plugin, when present, moves to the same version. It ships the
 # same bundle only while it has its own MCP server (.mcp.json); since
 # UNI-768 it is a stub without one.
@@ -81,7 +81,7 @@ if [ -n "$market" ]; then
   [ "$mcurrent" = "$current" ] || die "$market says ${mcurrent:-no version}, $manifest says $current; they move together"
 fi
 if [ -n "$(git status --porcelain)" ]; then
-  [ -n "$finish" ] && die "the working tree has changes; commit plugins/tilori/vendor${mvendor:+ and $mvendor} (and nothing else) before --finish"
+  [ -n "$finish" ] && die "the working tree has changes; commit plugins/universal-market/vendor${mvendor:+ and $mvendor} (and nothing else) before --finish"
   die "the working tree has changes; start from a clean branch"
 fi
 [ "$(git branch --show-current)" != main ] || die "on main; make a branch first"
@@ -145,7 +145,7 @@ if [ -z "$finish" ]; then
   cat <<NEXT
 
 release: bundle written and matches the release asset. Commit it, then finish:
-  git add plugins/tilori/vendor${mvendor:+ $mvendor} && git commit -m "Bundle tilori-agent $tag"
+  git add plugins/universal-market/vendor${mvendor:+ $mvendor} && git commit -m "Bundle tilori-agent $tag"
   sh tools/release.sh --finish $tag $version
 NEXT
   exit 0

@@ -6,7 +6,7 @@
 # hostile cwd or a "." PATH entry.
 set -eu
 cd "$(dirname "$0")/.."
-hook="$PWD/plugins/tilori/scripts/prompt-signal.sh"
+hook="$PWD/plugins/universal-market/scripts/prompt-signal.sh"
 t=$(mktemp -d); trap 'rm -rf "$t"' EXIT
 chmod 700 "$t"
 fail() { echo "prompt-signal: FAIL: $1" >&2; exit 1; }

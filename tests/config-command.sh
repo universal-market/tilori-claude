@@ -1,11 +1,11 @@
 #!/bin/sh
-# Tests scripts/config.sh (/tilori:config) against a stub CLI that records
+# Tests scripts/config.sh (/universal-market:config) against a stub CLI that records
 # its argv: valid input reaches `tilori-agent config` as separate arguments,
 # anything else exits 2 without running the CLI, there is no --agent, and a
 # hostile cwd or "." PATH entry runs nothing.
 set -eu
 cd "$(dirname "$0")/.."
-script="$PWD/plugins/tilori/scripts/config.sh"
+script="$PWD/plugins/universal-market/scripts/config.sh"
 t=$(mktemp -d); trap 'rm -rf "$t"' EXIT
 chmod 700 "$t"
 fail() { echo "config-command: FAIL: $1" >&2; exit 1; }

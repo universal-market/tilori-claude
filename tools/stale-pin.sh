@@ -3,7 +3,7 @@
 #
 #   sh tools/stale-pin.sh pr|scheduled
 #
-# It compares the tag in plugins/tilori/vendor/SOURCE with tilori-agent's
+# It compares the tag in plugins/universal-market/vendor/SOURCE with tilori-agent's
 # published releases (drafts and prereleases left out), read from the GitHub
 # API without changing anything. The pin is stale when the first release
 # after it came out more than 14 days ago, or when the latest release is more
@@ -29,7 +29,7 @@ MINORS=1
 
 warn() { echo "::warning title=tilori-agent pin::$*"; exit 0; }
 
-source=${STALE_PIN_SOURCE:-$here/../plugins/tilori/vendor/SOURCE}
+source=${STALE_PIN_SOURCE:-$here/../plugins/universal-market/vendor/SOURCE}
 [ -f "$source" ] || warn "no $source to read the pin from"
 # The first line of each only (Bastion bead9cd0): SOURCE is generated, but a
 # second line must not carry a newline into an annotation.

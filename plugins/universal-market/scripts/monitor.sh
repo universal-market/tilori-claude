@@ -24,7 +24,7 @@ case "$version" in
   *)
     TILORI_PLUGIN_VERSION=$version
     TILORI_PLUGIN_MANIFEST="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/installed_plugins.json"
-    TILORI_PLUGIN_KEY=tilori@tilori-claude
+    TILORI_PLUGIN_KEY=universal-market@tilori-claude
     export TILORI_PLUGIN_VERSION TILORI_PLUGIN_MANIFEST TILORI_PLUGIN_KEY
     ;;
 esac

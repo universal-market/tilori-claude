@@ -1,7 +1,7 @@
 #!/bin/sh
-# Builds plugins/tilori/vendor/tilori-agent.js, the tilori-agent CLI bundled
+# Builds plugins/universal-market/vendor/tilori-agent.js, the tilori-agent CLI bundled
 # into one JS file, from a tilori-agent release tag, and records where it came
-# from in plugins/tilori/vendor/SOURCE. A market plugin that ships its own
+# from in plugins/universal-market/vendor/SOURCE. A market plugin that ships its own
 # MCP server (one with plugins/market/.mcp.json; since UNI-768 it is a stub
 # without one) carries the same two files in plugins/market/vendor: this
 # script writes both, and --verify refuses if they differ.
@@ -111,7 +111,7 @@ if [ "$1" = --verify ]; then
   if [ $# -eq 2 ]; then
     case "$2" in /*) root=$2 ;; *) root=$here/$2 ;; esac
   fi
-  vendor=$root/plugins/tilori/vendor
+  vendor=$root/plugins/universal-market/vendor
   at=
   # One line saying why, then the summary naming the check that failed.
   fail() { check=$1; shift; echo "$*" >&2; echo "bundle FAILED: $check$at" >&2; exit 1; }
@@ -127,16 +127,16 @@ if [ "$1" = --verify ]; then
   }
 
   [ -f "$vendor/SOURCE" ] && [ -f "$vendor/tilori-agent.js" ] \
-    || fail sha256 "no plugins/tilori/vendor/SOURCE and tilori-agent.js in $root"
+    || fail sha256 "no plugins/universal-market/vendor/SOURCE and tilori-agent.js in $root"
   head=$(git -C "$root" rev-parse HEAD 2>/dev/null) || fail sha256 "$root is not a git checkout"
-  [ -z "$(git -C "$root" status --porcelain -- plugins/tilori/vendor plugins/market/vendor)" ] \
-    || fail sha256 "plugins/tilori/vendor or plugins/market/vendor has uncommitted changes, so a result would not be for $head"
+  [ -z "$(git -C "$root" status --porcelain -- plugins/universal-market/vendor plugins/market/vendor)" ] \
+    || fail sha256 "plugins/universal-market/vendor or plugins/market/vendor has uncommitted changes, so a result would not be for $head"
   # A market plugin with its own MCP server ships the same bundle:
   # byte-identical, or nothing below vouches for it.
   if [ -f "$root/plugins/market/.mcp.json" ]; then
     for f in tilori-agent.js SOURCE; do
       cmp -s "$vendor/$f" "$root/plugins/market/vendor/$f" \
-        || fail sha256 "plugins/market/vendor/$f differs from plugins/tilori/vendor/$f"
+        || fail sha256 "plugins/market/vendor/$f differs from plugins/universal-market/vendor/$f"
     done
   fi
   at=" @ $head"
@@ -214,7 +214,7 @@ if [ "$1" = --verify ]; then
 fi
 
 tag=$1
-vendor=plugins/tilori/vendor
+vendor=plugins/universal-market/vendor
 [ -x "$BUN" ] || { echo "bundle-agent: bun not found" >&2; exit 1; }
 bun_version=$("$BUN" --version)
 commit=$(build) || { echo "bundle-agent: couldn't clone and build $repo at $tag" >&2; exit 1; }

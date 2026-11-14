@@ -36,8 +36,8 @@ plugin() {
   chmod -R u+rwx "$t/p" "$t/data" 2>/dev/null || true
   rm -rf "$t/p" "$t/data" "$t/curl.log"
   mkdir -p "$t/p/scripts" "$t/p/vendor"
-  cp "$repo/plugins/tilori/scripts/run-agent.sh" "$repo/plugins/tilori/scripts/find-agent.sh" "$repo/plugins/tilori/scripts/fetch-agent.sh" "$t/p/scripts/"
-  sed "s|^CURL=/usr/bin/curl\$|CURL=$t/curl|" "$repo/plugins/tilori/scripts/fetch-agent.sh" >"$t/p/scripts/fetch-agent.sh"
+  cp "$repo/plugins/universal-market/scripts/run-agent.sh" "$repo/plugins/universal-market/scripts/find-agent.sh" "$repo/plugins/universal-market/scripts/fetch-agent.sh" "$t/p/scripts/"
+  sed "s|^CURL=/usr/bin/curl\$|CURL=$t/curl|" "$repo/plugins/universal-market/scripts/fetch-agent.sh" >"$t/p/scripts/fetch-agent.sh"
   grep -q "^CURL=$t/curl\$" "$t/p/scripts/fetch-agent.sh" || fail "couldn't stub curl"
   chmod +x "$t/p/scripts/"*.sh
   echo 'console.log("bundle")' >"$t/p/vendor/tilori-agent.js"
@@ -170,6 +170,6 @@ grep -q "neither bun nor node 22.18+ found" "$t/err" || fail "other js: $(cat "$
 [ ! -e "$t/curl.log" ] || fail "other js: curl ran"
 
 # The real fetch-agent.sh uses /usr/bin/curl with the fixed URL.
-grep -q '^CURL=/usr/bin/curl$' "$repo/plugins/tilori/scripts/fetch-agent.sh" || fail "fetch-agent.sh: CURL is not /usr/bin/curl"
-grep -q '^REPO=universal-market/tilori-agent$' "$repo/plugins/tilori/scripts/fetch-agent.sh" || fail "fetch-agent.sh: REPO changed"
+grep -q '^CURL=/usr/bin/curl$' "$repo/plugins/universal-market/scripts/fetch-agent.sh" || fail "fetch-agent.sh: CURL is not /usr/bin/curl"
+grep -q '^REPO=universal-market/tilori-agent$' "$repo/plugins/universal-market/scripts/fetch-agent.sh" || fail "fetch-agent.sh: REPO changed"
 echo "runtimes: ok"

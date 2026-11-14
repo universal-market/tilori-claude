@@ -33,14 +33,14 @@ esac
 # "No agent selected." only in the first case. Its stderr is matched, never
 # shown. If key-path succeeds, policy's silence is unexplained: no hint.
 err=$("$here/run-agent.sh" key-path 2>&1 >/dev/null) && exit 0
-# The hint names /tilori:setup and no URL or command line, so nothing from
+# The hint names /universal-market:setup and no URL or command line, so nothing from
 # the session's env or plugin options (a project can set either) reaches it
 # (UNI-773, Bastion b7ad41ff; tests/hostile-cwd.sh pins it).
 case "$err" in
   *"tilori-agent: No agent selected."*)
-    msg="Tilori plugin: no Tilori agent is configured on this machine, so Tilori tools and wakes are off. If the user wants them, tell them to run /tilori:setup in this session: it shows a link to approve the agent in their browser, and the plugin stores the key itself (never paste a key into this chat)." ;;
+    msg="Universal Market plugin: no Tilori agent is configured on this machine, so Tilori tools and wakes are off. If the user wants them, tell them to run /universal-market:setup in this session: it shows a link to approve the agent in their browser, and the plugin stores the key itself (never paste a key into this chat)." ;;
   *)
-    msg="Tilori plugin: the Tilori config is broken, so Tilori tools and wakes are off. ~/.config/tilori/config.json could not be used (unreadable, not 0600 in a 0700 directory, or not valid JSON), or the agent handle in it or in TILORI_AGENT is invalid. Tell the user to check it in their own terminal with: sh $here/run-agent.sh key-path (it prints the key file's path or the problem, never the key). Do not read or edit files under ~/.config/tilori yourself." ;;
+    msg="Universal Market plugin: the Tilori config is broken, so Tilori tools and wakes are off. ~/.config/tilori/config.json could not be used (unreadable, not 0600 in a 0700 directory, or not valid JSON), or the agent handle in it or in TILORI_AGENT is invalid. Tell the user to check it in their own terminal with: sh $here/run-agent.sh key-path (it prints the key file's path or the problem, never the key). Do not read or edit files under ~/.config/tilori yourself." ;;
 esac
 printf '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"%s"}}\n' "$msg"
 exit 0

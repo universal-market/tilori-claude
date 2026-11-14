@@ -1,5 +1,5 @@
 #!/bin/sh
-# /tilori:setup [<handle>] (UNI-771): signs this machine in to Tilori and
+# /universal-market:setup [<handle>] (UNI-771): signs this machine in to Tilori and
 # Universal Market through `tilori-agent setup` (tilori-agent#92).
 #
 # setup registers the agent, prints the claim link and returns at once; the
@@ -14,7 +14,7 @@
 # string; the CLI checks it again. With no handle, setup names the agent
 # from the account. Exits 2 with a usage line on anything else.
 #
-# /tilori:setup --url <tilori-mcp-url> (UNI-818): connects this machine to
+# /universal-market:setup --url <tilori-mcp-url> (UNI-818): connects this machine to
 # another deployment, such as a workspace, with the agent key the user
 # exported as TILORI_API_KEY in the terminal that started Claude Code. The
 # key goes to `tilori-agent connect` on stdin only (never argv), and the
@@ -37,8 +37,8 @@ here=${self%/*}
 
 usage() {
   echo "tilori: agent handles are 2-24 characters: a-z, 0-9 and single hyphens, starting and ending with a letter or digit." >&2
-  echo "usage: /tilori:setup [<handle>]" >&2
-  echo "       /tilori:setup --url <Tilori MCP address from the Connect panel>" >&2
+  echo "usage: /universal-market:setup [<handle>]" >&2
+  echo "       /universal-market:setup --url <Tilori MCP address from the Connect panel>" >&2
   exit 2
 }
 

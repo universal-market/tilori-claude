@@ -9,7 +9,7 @@
 # Includes a negative control proving the hostile files do work on plain Bun.
 # The first part runs a copy of the scripts without vendor/ (the install-based
 # fallback); then a fake bundle in vendor/ (precedence); then the real
-# bundled CLI in plugins/tilori/vendor.
+# bundled CLI in plugins/universal-market/vendor.
 set -eu
 case "$0" in */*) here=${0%/*} ;; *) here=. ;; esac
 repo=$(cd "$here/.." && pwd -P)
@@ -18,7 +18,7 @@ realbun=$(command -v bun 2>/dev/null || echo "$HOME/.bun/bin/bun")
 
 t=$(mktemp -d); trap 'rm -rf "$t"' EXIT
 plugin="$t/plugin"; mkdir -p "$plugin"
-cp -R "$repo/plugins/tilori/scripts" "$plugin/scripts"
+cp -R "$repo/plugins/universal-market/scripts" "$plugin/scripts"
 scripts="$plugin/scripts"
 run="$scripts/run-agent.sh"
 h="$t/home"; p="$t/project"; m="$t/markers"
@@ -153,13 +153,13 @@ JS
   no_markers "$3"
 }
 hint_case '"tilori-agent: No agent selected. Pass --agent, set TILORI_AGENT, or run tilori-agent init --default.\\n"' \
-  "tell them to run /tilori:setup in this session" "no-agent hint"
+  "tell them to run /universal-market:setup in this session" "no-agent hint"
 # UNI-773: env and plugin options a project can set never reach the hint,
 # which has no URL in it at all (Bastion b7ad41ff).
 nosel='"tilori-agent: No agent selected.\\n"'
-hint_case "$nosel" "tell them to run /tilori:setup in this session" "hint: TILORI_MCP_URL" TILORI_MCP_URL=https://INJECTED.example/mcp/tilori/v1
+hint_case "$nosel" "tell them to run /universal-market:setup in this session" "hint: TILORI_MCP_URL" TILORI_MCP_URL=https://INJECTED.example/mcp/tilori/v1
 case "$out" in *INJECTED*) fail "hint: a URL from env was shown: $out" ;; esac
-hint_case "$nosel" "tell them to run /tilori:setup in this session" "hint: plugin options" \
+hint_case "$nosel" "tell them to run /universal-market:setup in this session" "hint: plugin options" \
   CLAUDE_PLUGIN_OPTION_TILORI_URL=https://INJECTED.example/mcp/tilori/v1 CLAUDE_PLUGIN_OPTION_MARKET_URL=https://INJECTED.example/mcp/v1 \
   'TILORI_MARKET_URL=$(INJECTED)'
 case "$out" in *INJECTED*) fail "hint: a URL from options was shown: $out" ;; esac
@@ -294,7 +294,7 @@ no_markers "launcher hardening"
 # The real bundled CLI from a hostile directory. The project's .env points
 # TILORI_HOME at a config naming agent "evilagent"; the control shows plain
 # Bun from the project picks it up, and the plugin's path must not.
-bundle="$repo/plugins/tilori/vendor/tilori-agent.js"
+bundle="$repo/plugins/universal-market/vendor/tilori-agent.js"
 [ -f "$bundle" ] || fail "missing $bundle"
 chmod 700 "$p"
 printf '{"default_agent":"evilagent"}\n' > "$p/config.json"; chmod 600 "$p/config.json"
@@ -307,18 +307,18 @@ out=$(cd "$p" && env -i HOME="$h" PATH="$sys" "$realbun" "$bundle" policy 2>&1) 
 rm -f "$h/.config/tilori/config.json"
 case "$out" in *evilagent*) ;; *) fail "control: real bundle did not read the project .env (test is not meaningful): $out" ;; esac
 rm -f "$m/preload"
-out=$(cd "$p" && env -i HOME="$h" PATH=".:$sys" sh "$repo/plugins/tilori/scripts/run-agent.sh" help 2>&1) || fail "real bundle help: exit $? ($out)"
+out=$(cd "$p" && env -i HOME="$h" PATH=".:$sys" sh "$repo/plugins/universal-market/scripts/run-agent.sh" help 2>&1) || fail "real bundle help: exit $? ($out)"
 case "$out" in "tilori-agent: wake local coding agents"*) ;; *) fail "real bundle help: $out" ;; esac
 no_markers "real bundle help"
-out=$(cd "$p" && env -i HOME="$h" PATH=".:$sys" "$repo/plugins/tilori/scripts/session-start.sh" 2>&1) || fail "real bundle session-start: exit $?"
+out=$(cd "$p" && env -i HOME="$h" PATH=".:$sys" "$repo/plugins/universal-market/scripts/session-start.sh" 2>&1) || fail "real bundle session-start: exit $?"
 case "$out" in *evilagent*) fail "real bundle read the project .env: $out" ;; esac
-case "$out" in *"run /tilori:setup in this session"*) ;; *) fail "real bundle session-start gave no setup hint: $out" ;; esac
+case "$out" in *"run /universal-market:setup in this session"*) ;; *) fail "real bundle session-start gave no setup hint: $out" ;; esac
 no_markers "real bundle session-start"
 # Real bundle, broken configs: invalid JSON, and an invalid handle.
 mkdir -p "$h/.config/tilori"; chmod 700 "$h/.config" "$h/.config/tilori"
 for cfg in '{not json' '{"default_agent":"Bad Handle!"}'; do
   printf '%s\n' "$cfg" > "$h/.config/tilori/config.json"; chmod 600 "$h/.config/tilori/config.json"
-  out=$(cd "$p" && env -i HOME="$h" PATH=".:$sys" "$repo/plugins/tilori/scripts/session-start.sh" 2>&1) || fail "real broken config: exit $?"
+  out=$(cd "$p" && env -i HOME="$h" PATH=".:$sys" "$repo/plugins/universal-market/scripts/session-start.sh" 2>&1) || fail "real broken config: exit $?"
   case "$out" in *"the Tilori config is broken"*) ;; *) fail "real broken config ($cfg): $out" ;; esac
   case "$out" in *"Bad Handle"*|*"not json"*) fail "real broken config leaked text: $out" ;; esac
   no_markers "real broken config"

@@ -21,7 +21,7 @@ i=0; until python3 -c "import socket,sys; socket.create_connection(('127.0.0.1',
 done
 mkdir -m 700 "$t/home"; mkdir "$t/proj"
 printf '{"mcpServers":{"tilori":{"type":"http","url":"http://127.0.0.1:%s/mcp/tilori/v1","headersHelper":"%s"}}}\n' \
-  "$port" "$repo/plugins/tilori/scripts/headers.sh" > "$t/home/.claude.json"
+  "$port" "$repo/plugins/universal-market/scripts/headers.sh" > "$t/home/.claude.json"
 : > "$t/requests"
 (cd "$t/proj" && env -i HOME="$t/home" PATH=/usr/bin:/bin:"$(dirname "$CLAUDE")" timeout 90 "$CLAUDE" mcp list > "$t/out" 2>&1) || true
 grep -q 'tilori:' "$t/out" || fail "claude mcp list did not report the server"
