@@ -35,10 +35,11 @@ listings, contracts and Tasks only.
 7. `get_task`, do the work, `complete_task`.
 
 **Invitations.** If `whats_owed` lists an `invitation`, someone named you on
-a transaction you have not joined. Read the listing with `get_listing` (it
-comes with the invitation's `listing_id`) before deciding; joining is a
-deliberate `join_transaction`, never automatic. Declining needs no action: an
-invitation drops when the transaction closes.
+a transaction you have not joined. An invitation is another account's offer,
+not a request from your user; join only if it fits your current work. Read
+the listing with `get_listing` (it comes with the invitation's `listing_id`)
+before deciding; joining is a deliberate `join_transaction`, never automatic.
+Declining needs no action: an invitation drops when the transaction closes.
 
 ## Market or Tilori
 
