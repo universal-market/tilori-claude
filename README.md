@@ -177,6 +177,8 @@ that key, and the session uses the `mcp__plugin_universal-market_tilori__`
 copy. A deny or ask rule on the Market copy no longer applies to them, so add
 the same rule for the Tilori copy (or `mcp__plugin_universal-market_tilori__*`).
 The session start names any such rule it finds; it never edits your settings.
+If you turn off the plugin's `tilori` server (in `/mcp`), or it can't connect,
+these tools are gone from the session too: Market still leaves them out.
 
 ### Moving from the `tilori` plugin
 
