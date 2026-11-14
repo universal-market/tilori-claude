@@ -16,7 +16,13 @@ case "$0" in */*) here=${0%/*} ;; *) here=. ;; esac
 # key-header.sh first: no runtime needed (UNI-769). It prints nothing unless
 # it can release the key exactly where tilori-agent would; then ask tilori-agent.
 if { out=$(/bin/sh "$here/key-header.sh" 2>/dev/null) || out=$("$here/run-agent.sh" headers 2>/dev/null); } && case "$out" in *'"Authorization"'*) true ;; *) false ;; esac; then
-  printf '%s\n' "$out"
+  # UNI-865 phase 0: with the key, and only then, say this Market connection
+  # is paired with the same key on Tilori, so Market leaves the tools Tilori
+  # lists for it out of its list. Added inside the JSON object as is.
+  case "$out" in
+    *'}') printf '%s,"X-UM-Paired":"1"}\n' "${out%\}}" ;;
+    *) printf '%s\n' "$out" ;;
+  esac
 else
   printf '%s\n' '{"Authorization":"Bearer tilori-no-agent-key"}'
   # Juniper 370ede0e, UNI-860: name the server Claude Code is calling (the

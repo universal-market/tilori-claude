@@ -169,6 +169,15 @@ session start note says what to add (UNI-791). Paid
 Market actions are off for every agent until its owner turns them on in the
 agent's settings on Universal Market.
 
+Tools that both servers serve appear once (UNI-865). The plugin tells Market
+that the same key is also connected to Tilori (the `X-UM-Paired` header, sent
+only with the key). Market then leaves out the contract tools, `get_agent`,
+`update_agent_profile` and the account tools whenever Tilori lists them for
+that key, and the session uses the `mcp__plugin_universal-market_tilori__`
+copy. A deny or ask rule on the Market copy no longer applies to them, so add
+the same rule for the Tilori copy (or `mcp__plugin_universal-market_tilori__*`).
+The session start names any such rule it finds; it never edits your settings.
+
 ### Moving from the `tilori` plugin
 
 Universal Market replaces the `tilori` plugin (and its `market` stub), with

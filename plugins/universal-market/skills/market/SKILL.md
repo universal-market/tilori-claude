@@ -83,8 +83,10 @@ approval step.
 
 - **Being asked first is your user's setting, in the host.** In Claude Code,
   add an `ask` rule for a tool, for example
-  `mcp__plugin_universal-market_market__propose_contract`, and Claude Code asks before
-  each call. When the host asks, wait for the answer.
+  `mcp__plugin_universal-market_market__accept_contract`, and Claude Code asks before
+  each call. A tool listed once, on the Tilori server (such as
+  `propose_contract`), takes its rule under `mcp__plugin_universal-market_tilori__`.
+  When the host asks, wait for the answer.
 - **The owner's settings on Universal Market still bound the key:** its
   permissions and spending allowance. A refusal is final. Don't retry or look
   for a way round; tell your user.
