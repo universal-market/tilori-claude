@@ -5,7 +5,7 @@
 set -eu
 case "$0" in */*) here=${0%/*} ;; *) here=. ;; esac
 repo=$(cd "$here/.." && pwd -P)
-scripts="$repo/plugins/tilori/scripts"
+scripts="$repo/plugins/universal-market/scripts"
 t=$(mktemp -d); trap 'chmod -R u+rwx "$t" 2>/dev/null; rm -rf "$t"' EXIT
 fail() { echo "FAIL: $*" >&2; exit 1; }
 

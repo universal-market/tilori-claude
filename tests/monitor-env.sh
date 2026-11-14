@@ -10,7 +10,7 @@ realbun=$(command -v bun 2>/dev/null || echo "$HOME/.bun/bin/bun")
 
 t=$(mktemp -d); trap 'rm -rf "$t"' EXIT
 plugin="$t/plugin"; mkdir -p "$plugin/.claude-plugin"
-cp -R "$repo/plugins/tilori/scripts" "$plugin/scripts"
+cp -R "$repo/plugins/universal-market/scripts" "$plugin/scripts"
 h="$t/home"; mkdir -p "$h/.bun/bin" "$h/pkg/src"
 ln -s "$realbun" "$h/.bun/bin/bun"
 cat > "$h/pkg/src/cli.ts" <<'TS'
@@ -23,12 +23,12 @@ ln -s ../../pkg/src/cli.ts "$h/.bun/bin/tilori-agent"
 fail() { echo "FAIL: $*" >&2; exit 1; }
 run() { env -i HOME="$h" PATH=/usr/bin:/bin "$@" "$plugin/scripts/monitor.sh" 2>&1; }
 
-cp "$repo/plugins/tilori/.claude-plugin/plugin.json" "$plugin/.claude-plugin/plugin.json"
+cp "$repo/plugins/universal-market/.claude-plugin/plugin.json" "$plugin/.claude-plugin/plugin.json"
 v=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$plugin/.claude-plugin/plugin.json")
 out=$(run)
-[ "$out" = "v=$v m=$h/.claude/plugins/installed_plugins.json k=tilori@tilori-claude args=watch,--notify-lines" ] || fail "real plugin.json: $out"
+[ "$out" = "v=$v m=$h/.claude/plugins/installed_plugins.json k=universal-market@tilori-claude args=watch,--notify-lines" ] || fail "real plugin.json: $out"
 out=$(run CLAUDE_CONFIG_DIR=/cfg)
-[ "$out" = "v=$v m=/cfg/plugins/installed_plugins.json k=tilori@tilori-claude args=watch,--notify-lines" ] || fail "CLAUDE_CONFIG_DIR: $out"
+[ "$out" = "v=$v m=/cfg/plugins/installed_plugins.json k=universal-market@tilori-claude args=watch,--notify-lines" ] || fail "CLAUDE_CONFIG_DIR: $out"
 
 # No usable version: nothing is passed, and inherited values are cleared.
 printf '{ "name": "tilori", "version": "0.1.x; touch /tmp/x" }\n' > "$plugin/.claude-plugin/plugin.json"

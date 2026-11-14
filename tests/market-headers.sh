@@ -12,11 +12,11 @@ repo=$(cd "$here/.." && pwd -P)
 t=$(mktemp -d); trap 'rm -rf "$t"' EXIT
 fail() { echo "FAIL: $*" >&2; exit 1; }
 SENTINEL='{"Authorization":"Bearer tilori-no-agent-key"}'
-NOTE_TAIL="so Market will answer 401 invalid_token. Most likely this plugin's market_url differs from the one in ~/.config/tilori/config.json, the only URL the key is sent to, so nothing leaked. Fix: run sh ~/.claude/plugins/data/tilori-tilori-claude/tilori-agent sync-plugin in a terminal and follow what it prints. If config.json has no market_url, the session start note says what to add; if this agent isn't set up on this machine, run /tilori:setup."
+NOTE_TAIL="so Market will answer 401 invalid_token. Most likely this plugin's market_url differs from the one in ~/.config/tilori/config.json, the only URL the key is sent to, so nothing leaked. Fix: run sh ~/.claude/plugins/data/universal-market-tilori-claude/tilori-agent sync-plugin in a terminal and follow what it prints. If config.json has no market_url, the session start note says what to add; if this agent isn't set up on this machine, run /universal-market:setup."
 NOTE="market: no key was sent to the Market server, $NOTE_TAIL"
 
 stub() {
-  rm -rf "$t/s"; mkdir -p "$t/s"; cp "$repo/plugins/tilori/scripts/market-headers.sh" "$t/s/headers.sh"
+  rm -rf "$t/s"; mkdir -p "$t/s"; cp "$repo/plugins/universal-market/scripts/market-headers.sh" "$t/s/headers.sh"
   printf '#!/bin/sh\n%s\n' "$1" > "$t/s/run-agent.sh"; chmod +x "$t/s/headers.sh" "$t/s/run-agent.sh"
 }
 run() { (cd / && env -i HOME="$t/home" PATH=/usr/bin:/bin "$t/s/headers.sh" 2>"$t/err"); }
@@ -57,10 +57,10 @@ stub 'echo "{\"Authorization\":\"Bearer mcp_sk_stub\"}"; echo "secret detail" >&
 stub 'exit 0'; rm "$t/s/run-agent.sh"
 [ "$(run)" = "$SENTINEL" ] || fail "missing run-agent.sh: $(run)"
 
-# The server entries (UNI-768): both in the tilori plugin. Market:
+# The server entries (UNI-768): both in the plugin. Market:
 # TILORI_MARKET_URL for a second home (UNI-751), else the plugin's URL
 # setting, whose default is production's; this helper.
-python3 - "$repo/plugins/tilori" <<'PY' || fail ".mcp.json or plugin.json shape"
+python3 - "$repo/plugins/universal-market" <<'PY' || fail ".mcp.json or plugin.json shape"
 import json, sys
 root = sys.argv[1]
 mcp = json.load(open(root + "/.mcp.json"))["mcpServers"]
@@ -82,7 +82,7 @@ PY
 # The real scripts and bundled CLI, in an empty HOME: no config, no key.
 mkdir -m 700 "$t/home"
 out=$(cd / && env -i HOME="$t/home" PATH=/usr/bin:/bin:"$(dirname "$(command -v bun 2>/dev/null || echo "$HOME/.bun/bin/bun")")" \
-  CLAUDE_CODE_MCP_SERVER_URL=https://example.invalid/mcp/v1 "$repo/plugins/tilori/scripts/market-headers.sh" 2>/dev/null) \
+  CLAUDE_CODE_MCP_SERVER_URL=https://example.invalid/mcp/v1 "$repo/plugins/universal-market/scripts/market-headers.sh" 2>/dev/null) \
   || fail "real headers.sh exited non-zero"
 [ "$out" = "$SENTINEL" ] || fail "real headers.sh with no key: $out"
 
@@ -101,7 +101,7 @@ chmod 600 "$cfg/config.json"
 printf '%s\n' mcp_sk_market_headers_probe_dummy > "$cfg/agents/probe.key"; chmod 600 "$cfg/agents/probe.key"
 real() { # server URL
   (cd / && env -i HOME="$t/home2" PATH=/usr/bin:/bin:"$(dirname "$(command -v bun 2>/dev/null || echo "$HOME/.bun/bin/bun")")" \
-    CLAUDE_CODE_MCP_SERVER_URL="$1" "$repo/plugins/tilori/scripts/market-headers.sh" 2>/dev/null)
+    CLAUDE_CODE_MCP_SERVER_URL="$1" "$repo/plugins/universal-market/scripts/market-headers.sh" 2>/dev/null)
 }
 KEYED='{"Authorization":"Bearer mcp_sk_market_headers_probe_dummy"}'
 out=$(real https://market.example.test/mcp/v1) || fail "real headers.sh exited non-zero"

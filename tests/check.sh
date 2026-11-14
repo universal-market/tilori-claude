@@ -16,31 +16,29 @@ if [ "${TILORI_SKIP_VALIDATE:-}" = 1 ]; then
   skipped_validate=1
 else
   CLAUDE="${CLAUDE:-$(command -v claude || echo "$HOME/.local/bin/claude")}"
-  echo "== plugin";      "$CLAUDE" plugin validate --strict ./plugins/tilori | tail -1
-  echo "== market plugin"; "$CLAUDE" plugin validate --strict ./plugins/market | tail -1
+  echo "== plugin";      "$CLAUDE" plugin validate --strict ./plugins/universal-market | tail -1
   echo "== marketplace"; "$CLAUDE" plugin validate . | tail -1
   echo "== wake probe";  "$CLAUDE" plugin validate ./tests/wake-probe/plugin | tail -1
   echo "== needs-auth probe"; CLAUDE="$CLAUDE" sh tests/needs-auth-probe.sh
 fi
-echo "== shell";       for f in plugins/tilori/scripts/*.sh plugins/market/scripts/*.sh tests/*.sh tools/*.sh tests/wake-probe/plugin/probe.sh; do sh -n "$f"; done
-echo "== json";        for f in .claude-plugin/marketplace.json plugins/tilori/.claude-plugin/plugin.json plugins/tilori/.mcp.json plugins/tilori/monitors/monitors.json plugins/tilori/hooks/hooks.json plugins/market/.claude-plugin/plugin.json plugins/market/hooks/hooks.json; do python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$f"; done
+echo "== shell";       for f in plugins/universal-market/scripts/*.sh tests/*.sh tools/*.sh tests/wake-probe/plugin/probe.sh; do sh -n "$f"; done
+echo "== json";        for f in .claude-plugin/marketplace.json plugins/universal-market/.claude-plugin/plugin.json plugins/universal-market/.mcp.json plugins/universal-market/monitors/monitors.json plugins/universal-market/hooks/hooks.json; do python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$f"; done
 echo "== bundle checksum"
-want=$(sed -n 's/^sha256=//p' plugins/tilori/vendor/SOURCE)
-got=$( (sha256sum plugins/tilori/vendor/tilori-agent.js 2>/dev/null || shasum -a 256 plugins/tilori/vendor/tilori-agent.js) | cut -d' ' -f1)
+want=$(sed -n 's/^sha256=//p' plugins/universal-market/vendor/SOURCE)
+got=$( (sha256sum plugins/universal-market/vendor/tilori-agent.js 2>/dev/null || shasum -a 256 plugins/universal-market/vendor/tilori-agent.js) | cut -d' ' -f1)
 [ -n "$want" ] && [ "$got" = "$want" ] || { echo "vendor/tilori-agent.js sha256 $got does not match SOURCE ($want)" >&2; exit 1; }
 echo "$got"
-echo "== market stub"
-# The market plugin is a stub since UNI-768: no MCP server, no bundle, no
-# launcher; only its notice. It still moves to the same version, so an
-# update reaches existing installs and shows the notice.
-for f in .mcp.json vendor scripts/run-agent.sh scripts/headers.sh skills; do
-  [ ! -e "plugins/market/$f" ] || { echo "plugins/market/$f exists: the market plugin is a stub now" >&2; exit 1; }
-done
-v() { sed -n 's/^  "version": "\(.*\)",$/\1/p' "plugins/$1/.claude-plugin/plugin.json"; }
-[ -n "$(v tilori)" ] && [ "$(v tilori)" = "$(v market)" ] || { echo "plugin versions differ: tilori $(v tilori), market $(v market)" >&2; exit 1; }
-out=$(sh plugins/market/scripts/notice.sh)
-python3 -c 'import json,sys; d=json.loads(sys.argv[1]); assert list(d)==["systemMessage"] and "/plugin uninstall market" in d["systemMessage"], d' "$out"
-echo "stub only, same version ($(v tilori))"
+echo "== old plugin names"
+# UNI-905 (UNI-874 step 5, Don): the plugin is universal-market, with no
+# backwards compatibility. No tracked file outside the vendored bundle may
+# name the old id, its MCP server or tool prefix, its commands or skills, or
+# its data path, and the old plugin directories are gone. The brackets keep
+# this line from matching itself.
+for d in plugins/"tilori" plugins/market; do [ ! -e "$d" ] || { echo "$d exists: the plugin is universal-market now" >&2; exit 1; }; done
+if git ls-files -z -- . ':!plugins/universal-market/vendor' | xargs -0 grep -nE 'mcp__plugin_tilori[_]|plugin[:]tilori:|/tilori[:]|\btilori[:](tilori|market|contracts|config|setup)\b|tilori[@]tilori-claude|tilori-tilori[-]claude|plugins/tilor[i]\b' -- 2>/dev/null; then
+  echo "old plugin name in tracked files: use universal-market (UNI-905)" >&2; exit 1
+fi
+echo "none"
 echo "== bundle rebuild"
 if [ "${TILORI_SKIP_REBUILD:-}" = 1 ]; then
   {
@@ -48,7 +46,7 @@ if [ "${TILORI_SKIP_REBUILD:-}" = 1 ]; then
     echo "!! WARNING: TILORI_SKIP_REBUILD=1, the bundle rebuild check was SKIPPED."
     echo "!! vendor/tilori-agent.js matches SOURCE's checksum, but nobody proved it"
     echo "!! is what the pinned tilori-agent tag builds to. Not valid for reviewing"
-    echo "!! a change to plugins/tilori/vendor/: rerun without TILORI_SKIP_REBUILD."
+    echo "!! a change to plugins/universal-market/vendor/: rerun without TILORI_SKIP_REBUILD."
     echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
   } >&2
   skipped_rebuild=1

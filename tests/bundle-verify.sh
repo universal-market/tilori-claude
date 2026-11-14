@@ -24,9 +24,9 @@ sha256=$S"
 
 # A plugin checkout with that bundle vendored, committed.
 setup() {
-  rm -rf "$t/r"; mkdir -p "$t/r/plugins/tilori/vendor"
-  cp "$t/built.js" "$t/r/plugins/tilori/vendor/tilori-agent.js"
-  printf '# Generated\n%s\n' "${1:-$ASSET}" > "$t/r/plugins/tilori/vendor/SOURCE"
+  rm -rf "$t/r"; mkdir -p "$t/r/plugins/universal-market/vendor"
+  cp "$t/built.js" "$t/r/plugins/universal-market/vendor/tilori-agent.js"
+  printf '# Generated\n%s\n' "${1:-$ASSET}" > "$t/r/plugins/universal-market/vendor/SOURCE"
   (cd "$t/r" && git init -q && g add -A && g commit -qm init)
   HEAD=$(git -C "$t/r" rev-parse HEAD)
 }
@@ -77,15 +77,15 @@ setup; refuse "no release" sha256 "release v0.1.17 not found" STUB_NO_RELEASE=1
 setup; refuse "no asset" sha256 "has no tilori-agent.js.sha256 asset yet" STUB_UPLOADER=
 setup; refuse "wrong uploader" sha256 "uploaded by mallory, not github-actions[bot]" STUB_UPLOADER=mallory
 setup; refuse "odd uploader" sha256 "uploaded by an unexpected account" "STUB_UPLOADER=$(printf 'x\033[2Jy')"
-setup; echo tampered > "$t/r/plugins/tilori/vendor/tilori-agent.js"; (cd "$t/r" && g commit -qam tamper)
-refuse "tampered bundle" sha256 "sha256 mismatch: vendored $(sha "$t/r/plugins/tilori/vendor/tilori-agent.js"), release v0.1.17 $S"
+setup; echo tampered > "$t/r/plugins/universal-market/vendor/tilori-agent.js"; (cd "$t/r" && g commit -qam tamper)
+refuse "tampered bundle" sha256 "sha256 mismatch: vendored $(sha "$t/r/plugins/universal-market/vendor/tilori-agent.js"), release v0.1.17 $S"
 setup; refuse "asset differs" SOURCE "SOURCE differs from release v0.1.17's tilori-agent.js.sha256 in: bun" \
   "STUB_ASSET=$(printf '%s\n' "$ASSET" | sed 's/^bun=.*/bun=1.4.4/')"
 setup; refuse "tag moved" SOURCE "SOURCE $C is not tag v0.1.17 ($(printf 'f%.0s' $(seq 40)))" \
   "STUB_TAG_COMMIT=$(printf 'f%.0s' $(seq 40))"
 setup; refuse "other Bun" --verify "SOURCE was built with Bun 1.4.3, this is Bun 1.5.0" STUB_BUN=1.5.0
 setup; refuse "rebuild differs" --verify "rebuild mismatch: rebuild of v0.1.17" STUB_BUILD=other
-setup; echo dirty >> "$t/r/plugins/tilori/vendor/SOURCE"; refuse "dirty vendor" sha256 "uncommitted changes"
+setup; echo dirty >> "$t/r/plugins/universal-market/vendor/SOURCE"; refuse "dirty vendor" sha256 "uncommitted changes"
 # A hostile SOURCE value is refused without being printed.
 setup "$(printf '%s\n' "$ASSET" | sed "s/^tag=.*/tag=v0.1.17$(printf '\033')[2J/")"
 refuse "bad tag" SOURCE "SOURCE: tag is missing, duplicated or not vX.Y.Z"
@@ -101,12 +101,12 @@ case "$out" in *"v0.1.99"*) fail "duplicate commit: printed the forged line" ;; 
 # A market plugin with its own MCP server carries a copy (UNI-748):
 # identical and committed, or refused. Since UNI-768 it is a stub with no
 # .mcp.json, which needs no copy.
-market() { mkdir -p "$t/r/plugins/market/vendor"; echo '{}' > "$t/r/plugins/market/.mcp.json"; cp "$t/r/plugins/tilori/vendor/"* "$t/r/plugins/market/vendor/"; }
+market() { mkdir -p "$t/r/plugins/market/vendor"; echo '{}' > "$t/r/plugins/market/.mcp.json"; cp "$t/r/plugins/universal-market/vendor/"* "$t/r/plugins/market/vendor/"; }
 setup; market; (cd "$t/r" && g add -A && g commit -qm market); HEAD=$(git -C "$t/r" rev-parse HEAD)
 out=$(run) || fail "market copy: $out"
 [ "$(printf '%s\n' "$out" | tail -1)" = "bundle ok: v0.1.17 @ $HEAD (sha256, SOURCE, --verify)" ] || fail "market copy summary: $out"
 setup; market; echo tampered > "$t/r/plugins/market/vendor/tilori-agent.js"; (cd "$t/r" && g add -A && g commit -qm market)
-refuse "market bundle differs" sha256 "plugins/market/vendor/tilori-agent.js differs from plugins/tilori/vendor/tilori-agent.js"
+refuse "market bundle differs" sha256 "plugins/market/vendor/tilori-agent.js differs from plugins/universal-market/vendor/tilori-agent.js"
 setup; market; (cd "$t/r" && g add -A && g commit -qm market); echo x >> "$t/r/plugins/market/vendor/SOURCE"
 refuse "dirty market vendor" sha256 "uncommitted changes"
 setup; mkdir -p "$t/r/plugins/market"; echo '{}' > "$t/r/plugins/market/.mcp.json"; (cd "$t/r" && g add -A && g commit -qm market)
@@ -126,7 +126,7 @@ binrel() {
     printf '%s\tgithub-actions[bot]\tsha256:%s\n%s.sha256\tgithub-actions[bot]\t\n' "$a" "$h" "$a" >> "$t/assets.tsv"
   done
 }
-pin() { { echo '# Generated'; for a in $BINS; do echo "$a $(binsha "$a")"; done; } > "$t/r/plugins/tilori/vendor/BINARIES"; (cd "$t/r" && g add -A && g commit -qm bins); HEAD=$(git -C "$t/r" rev-parse HEAD); }
+pin() { { echo '# Generated'; for a in $BINS; do echo "$a $(binsha "$a")"; done; } > "$t/r/plugins/universal-market/vendor/BINARIES"; (cd "$t/r" && g add -A && g commit -qm bins); HEAD=$(git -C "$t/r" rev-parse HEAD); }
 nobins() { rm -rf "$t/binassets"; rm -f "$t/assets.tsv"; }
 
 binrel; setup; pin; out=$(run) || fail "binaries: $out"
@@ -136,7 +136,7 @@ nobins; setup; out=$(run) || fail "no binaries: $out"
 case "$out" in *"binaries: none on release v0.1.17, none pinned"*) ;; *) fail "no binaries line: $out" ;; esac
 nobins; setup; pin; refuse "BINARIES without release binaries" binaries "vendor/BINARIES pins binaries, but release v0.1.17 has none"
 binrel; setup; refuse "release binaries without BINARIES" binaries "release v0.1.17 has binaries but vendor/BINARIES is missing"
-binrel; setup; pin; sed -i.bak "s/^tilori-agent-darwin-arm64 .*/tilori-agent-darwin-arm64 $(binsha other)/" "$t/r/plugins/tilori/vendor/BINARIES"; rm -f "$t/r/plugins/tilori/vendor/BINARIES.bak"; (cd "$t/r" && g commit -qam edit)
+binrel; setup; pin; sed -i.bak "s/^tilori-agent-darwin-arm64 .*/tilori-agent-darwin-arm64 $(binsha other)/" "$t/r/plugins/universal-market/vendor/BINARIES"; rm -f "$t/r/plugins/universal-market/vendor/BINARIES.bak"; (cd "$t/r" && g commit -qam edit)
 refuse "a changed pin" binaries "vendor/BINARIES differs from release v0.1.17's .sha256 assets"
 binrel; sed -i.bak 's/^\(tilori-agent-linux-x64\)\tgithub-actions\[bot\]/\1\tmallory/' "$t/assets.tsv"; setup; pin
 refuse "an executable uploaded by a person" binaries "release v0.1.17's tilori-agent-linux-x64 was uploaded by mallory, not github-actions[bot]"
@@ -158,18 +158,18 @@ nobins
 
 # Writing a bundle pins the release's binaries, or none.
 gen() {
-  rm -rf "$t/gen"; mkdir -p "$t/gen/tools" "$t/gen/plugins/tilori/vendor"
+  rm -rf "$t/gen"; mkdir -p "$t/gen/tools" "$t/gen/plugins/universal-market/vendor"
   cp "$repo/tools/bundle-agent.sh" "$t/gen/tools/"
   (cd "$t/gen" && env GH="$t/gh" BUN="$t/bun" sh tools/bundle-agent.sh v0.1.17 2>&1)
 }
 binrel; out=$(gen) || fail "write with binaries: $out"
-[ "$(grep -v '^#' "$t/gen/plugins/tilori/vendor/BINARIES")" = "$(for a in $BINS; do echo "$a $(binsha "$a")"; done)" ] || fail "written BINARIES: $(cat "$t/gen/plugins/tilori/vendor/BINARIES")"
+[ "$(grep -v '^#' "$t/gen/plugins/universal-market/vendor/BINARIES")" = "$(for a in $BINS; do echo "$a $(binsha "$a")"; done)" ] || fail "written BINARIES: $(cat "$t/gen/plugins/universal-market/vendor/BINARIES")"
 nobins; out=$(gen) || fail "write without binaries: $out"
-[ ! -e "$t/gen/plugins/tilori/vendor/BINARIES" ] || fail "BINARIES written for a release without binaries"
+[ ! -e "$t/gen/plugins/universal-market/vendor/BINARIES" ] || fail "BINARIES written for a release without binaries"
 case "$out" in *"has no compiled binaries"*) ;; *) fail "no-binaries note: $out" ;; esac
 binrel; sed -i.bak 's/\tgithub-actions\[bot\]\tsha256/\tmallory\tsha256/' "$t/assets.tsv"
 if out=$(gen); then fail "write with a bad binary: accepted"; fi
-[ ! -e "$t/gen/plugins/tilori/vendor/BINARIES" ] || fail "BINARIES written from a bad release"
+[ ! -e "$t/gen/plugins/universal-market/vendor/BINARIES" ] || fail "BINARIES written from a bad release"
 nobins
 
 out=$(sh "$repo/tools/bundle-agent.sh" --bogus 2>&1) && fail "bad argument accepted"

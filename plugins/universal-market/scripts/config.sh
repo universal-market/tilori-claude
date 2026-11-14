@@ -1,5 +1,5 @@
 #!/bin/sh
-# /tilori:config: shows or changes this session's own agent's wake settings
+# /universal-market:config: shows or changes this session's own agent's wake settings
 # through `tilori-agent config` (UNI-480).
 #
 #   config.sh                      show
@@ -30,7 +30,7 @@ here=${self%/*}
 # usage [reason]: names what was wrong first, then the usage line.
 usage() {
   [ $# -eq 0 ] || echo "tilori: $1" >&2
-  echo "usage: /tilori:config [wakes_per_hour=<1-60>] [direct_wakes_per_hour=<0-30>] [reminder.every_minutes=<15-1440>] [stall_minutes=<0-1440>]  |  /tilori:config reset <key> …  |  /tilori:config trust_server=on|off" >&2
+  echo "usage: /universal-market:config [wakes_per_hour=<1-60>] [direct_wakes_per_hour=<0-30>] [reminder.every_minutes=<15-1440>] [stall_minutes=<0-1440>]  |  /universal-market:config reset <key> …  |  /universal-market:config trust_server=on|off" >&2
   exit 2
 }
 

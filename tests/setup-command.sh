@@ -1,5 +1,5 @@
 #!/bin/sh
-# /tilori:setup (UNI-771): setup.sh checks the handle against Tilori's rule
+# /universal-market:setup (UNI-771): setup.sh checks the handle against Tilori's rule
 # before anything runs and passes it to `tilori-agent setup` as one argv
 # entry; anything else exits 2 without running the CLI. The command text
 # keeps its safety lines.
@@ -11,7 +11,7 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 
 # setup.sh next to a stub run-agent.sh that prints each argument on a line.
 mkdir -p "$t/s"
-cp "$repo/plugins/tilori/scripts/setup.sh" "$t/s/"
+cp "$repo/plugins/universal-market/scripts/setup.sh" "$t/s/"
 printf '#!/bin/sh\necho "cwd=$(pwd)"\nfor a in "$@"; do printf "[%%s]\\n" "$a"; done\n' >"$t/s/run-agent.sh"
 chmod +x "$t/s/setup.sh" "$t/s/run-agent.sh"
 mkdir -p "$t/proj"
@@ -30,7 +30,7 @@ run || fail "bare: refused"
 for h in a abcdefghijklmnopqrstuvwxy -ab ab- a--b Ab AB 'a b' 'a;b' 'a&&b' '$(id)' '`id`' 'a/b' '../x' 'a.b' 'a_b' "$(printf 'a\nb')" "$(printf 'ab\t')" 'é1' 'aé' '' '--help' "ab'cd" 'ab"cd' 'a|b' 'a>b' '*' '?b'; do
   if run "$h"; then fail "'$h' accepted"; fi
   [ ! -s "$t/out" ] || fail "'$h': the CLI ran: $(cat "$t/out")"
-  grep -q '^usage: /tilori:setup \[<handle>\]$' "$t/err" || fail "'$h': no usage: $(cat "$t/err")"
+  grep -q '^usage: /universal-market:setup \[<handle>\]$' "$t/err" || fail "'$h': no usage: $(cat "$t/err")"
 done
 if run ab cd; then fail "two handles accepted"; fi
 [ ! -s "$t/out" ] || fail "two handles: the CLI ran"
@@ -54,7 +54,7 @@ done
 for u in '' example.com ftp://x.example 'https://' 'https://x.example/?a=b' 'https://x.example/a&b' "https://x.example/'a" 'https://x.example/a b' 'https://x.example/$(id)' 'https://x.example/`id`' 'https://x.example/;id' "$(printf 'https://x.example/\nb')" 'https://é.example' '--replace'; do
   if runk --url "$u"; then fail "--url '$u' accepted"; fi
   [ ! -s "$t/out" ] || fail "--url '$u': the CLI ran: $(cat "$t/out")"
-  grep -q '^       /tilori:setup --url ' "$t/err" || fail "--url '$u': no usage: $(cat "$t/err")"
+  grep -q '^       /universal-market:setup --url ' "$t/err" || fail "--url '$u': no usage: $(cat "$t/err")"
 done
 for extra in '--replace' 'x'; do
   if runk --url https://x.example/mcp/tilori/v1 "$extra"; then fail "--url with '$extra' accepted"; fi
@@ -79,7 +79,7 @@ grep -qx '\[setup\]' "$t/out" || fail "handle with a key: $(cat "$t/out")"
 # The command text: the same rule, the script by its plugin path, and the
 # safety lines a session needs (no key in chat, no fetching the link, only
 # when the user typed it).
-cmd="$repo/plugins/tilori/commands/setup.md"
+cmd="$repo/plugins/universal-market/commands/setup.md"
 for line in \
   'argument-hint: "[<handle>] | --url <address>"' \
   'disable-model-invocation: true' \
@@ -97,6 +97,6 @@ for line in \
   grep -qF -- "$line" "$cmd" || fail "commands/setup.md lacks: $line"
 done
 # The session-start note points at the command, not a terminal init.
-grep -q 'tell them to run /tilori:setup in this session' "$repo/plugins/tilori/scripts/session-start.sh" \
-  || fail "session-start.sh doesn't point at /tilori:setup"
+grep -q 'tell them to run /universal-market:setup in this session' "$repo/plugins/universal-market/scripts/session-start.sh" \
+  || fail "session-start.sh doesn't point at /universal-market:setup"
 echo "setup-command: ok"

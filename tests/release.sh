@@ -17,10 +17,10 @@ sha256=aaaa"
 
 # A fresh copy of the repo's tools and plugin manifest in its own git repo.
 setup() {
-  rm -rf "$t/r"; mkdir -p "$t/r/tools" "$t/r/plugins/tilori/.claude-plugin" "$t/r/plugins/tilori/vendor" "$t/r/tests"
+  rm -rf "$t/r"; mkdir -p "$t/r/tools" "$t/r/plugins/universal-market/.claude-plugin" "$t/r/plugins/universal-market/vendor" "$t/r/tests"
   cp "$repo/tools/release.sh" "$t/r/tools/"
-  printf '{\n  "name": "tilori",\n  "version": "0.1.14",\n  "x": 1\n}\n' > "$t/r/plugins/tilori/.claude-plugin/plugin.json"
-  printf '# header\nold\n' > "$t/r/plugins/tilori/vendor/SOURCE"
+  printf '{\n  "name": "universal-market",\n  "version": "0.1.14",\n  "x": 1\n}\n' > "$t/r/plugins/universal-market/.claude-plugin/plugin.json"
+  printf '# header\nold\n' > "$t/r/plugins/universal-market/vendor/SOURCE"
   (cd "$t/r" && git init -q && git -c user.name=t -c user.email=t@t add -A && git -c user.name=t -c user.email=t@t commit -qm init && git checkout -qb rel)
   # Stub gh: answers from env, writes the asset on download.
   cat > "$t/gh" <<SH
@@ -43,10 +43,10 @@ SH
 #!/bin/sh
 if [ "\$1" = --verify ]; then
   # Like the real --verify: a result is for HEAD, so a dirty vendor/ is refused.
-  [ -z "\$(git status --porcelain -- plugins/tilori/vendor)" ] || { echo "vendor has uncommitted changes"; exit 1; }
+  [ -z "\$(git status --porcelain -- plugins/universal-market/vendor)" ] || { echo "vendor has uncommitted changes"; exit 1; }
   echo verified; exit \${STUB_VERIFY:-0}
 fi
-printf '# Generated\n%s\n' "\${STUB_SOURCE:-\$ASSET}" > plugins/tilori/vendor/SOURCE
+printf '# Generated\n%s\n' "\${STUB_SOURCE:-\$ASSET}" > plugins/universal-market/vendor/SOURCE
 SH
   chmod +x "$t/gh" "$t/bundle"
 }
@@ -55,8 +55,8 @@ PIN=$(printf reviewed | { sha256sum 2>/dev/null || shasum -a 256; }); PIN=${PIN%
 BPIN=$(printf reviewed-bins | { sha256sum 2>/dev/null || shasum -a 256; }); BPIN=${BPIN%% *}
 run() { (cd "$t/r" && env ASSET="$ASSET" GH="$t/gh" BUNDLE="$t/bundle" CHECK="${CHECK:-true}" WORKFLOW_SHA256="$PIN" BINARIES_WORKFLOW_SHA256="$BPIN" "$@" sh tools/release.sh v0.1.11 0.1.15 2>&1); }
 finish() { (cd "$t/r" && env ASSET="$ASSET" GH="$t/gh" BUNDLE="$t/bundle" CHECK="${CHECK:-true}" WORKFLOW_SHA256="$PIN" BINARIES_WORKFLOW_SHA256="$BPIN" "$@" sh tools/release.sh --finish v0.1.11 0.1.15 2>&1); }
-commit_vendor() { (cd "$t/r" && git -c user.name=t -c user.email=t@t add plugins/tilori/vendor && git -c user.name=t -c user.email=t@t commit -qm bundle); }
-version() { sed -n 's/^  "version": "\(.*\)",$/\1/p' "$t/r/plugins/tilori/.claude-plugin/plugin.json"; }
+commit_vendor() { (cd "$t/r" && git -c user.name=t -c user.email=t@t add plugins/universal-market/vendor && git -c user.name=t -c user.email=t@t commit -qm bundle); }
+version() { sed -n 's/^  "version": "\(.*\)",$/\1/p' "$t/r/plugins/universal-market/.claude-plugin/plugin.json"; }
 
 # Part 1 writes and checks the bundle, then stops: nothing verified, no bump.
 setup; out=$(run) || fail "good release, part 1: $out"
@@ -65,14 +65,14 @@ case "$out" in *"release: ready"*|*verified*) fail "part 1 went past step 4: $ou
 [ "$(version)" = 0.1.14 ] || fail "part 1 bumped the version"
 # --finish before the bundle is committed is refused (UNI-691).
 if out=$(finish); then fail "--finish with an uncommitted bundle accepted: $out"; fi
-case "$out" in *"commit plugins/tilori/vendor"*) ;; *) fail "uncommitted --finish message: $out" ;; esac
+case "$out" in *"commit plugins/universal-market/vendor"*) ;; *) fail "uncommitted --finish message: $out" ;; esac
 [ "$(version)" = 0.1.14 ] || fail "plugin.json changed on a refused --finish"
 # Part 2, on the committed bundle.
 commit_vendor
 out=$(finish) || fail "good release, --finish: $out"
 case "$out" in *verified*"release: ready"*"sha256 \`aaaa\`"*"0.1.14 -> 0.1.15"*) ;; *) fail "good release summary: $out" ;; esac
 [ "$(version)" = 0.1.15 ] || fail "version not bumped"
-grep -q '"x": 1' "$t/r/plugins/tilori/.claude-plugin/plugin.json" || fail "plugin.json lost other fields"
+grep -q '"x": 1' "$t/r/plugins/universal-market/.claude-plugin/plugin.json" || fail "plugin.json lost other fields"
 
 refuse() { # name, expected message, env...
   name=$1; want=$2; shift 2
@@ -108,7 +108,7 @@ refuse_finish "finish: asset by a person" "not github-actions[bot]" STUB_UPLOADE
 refuse_finish "finish: tag moved" "is not on universal-market/tilori-agent main" STUB_STATUS=ahead
 # A committed SOURCE that doesn't match the asset (edited after part 1).
 setup; run >/dev/null || fail "edited SOURCE: part 1 failed"
-printf '# Generated\ntag=v0.1.11\n' > "$t/r/plugins/tilori/vendor/SOURCE"; commit_vendor
+printf '# Generated\ntag=v0.1.11\n' > "$t/r/plugins/universal-market/vendor/SOURCE"; commit_vendor
 if out=$(finish); then fail "edited SOURCE accepted: $out"; fi
 case "$out" in *"does not match the release asset"*) ;; *) fail "edited SOURCE message: $out" ;; esac
 
@@ -124,7 +124,7 @@ case "$out" in *"not higher than 0.1.14"*) ;; *) fail "lower version message: $o
 echo dirty > "$t/r/x"
 if out=$(cd "$t/r" && GH=false sh tools/release.sh v0.1.11 0.1.15 2>&1); then fail "dirty tree accepted"; fi
 case "$out" in *"working tree has changes"*) ;; *) fail "dirty message: $out" ;; esac
-# The market plugin moves with the tilori plugin (UNI-748): same version, both bumped.
+# A market plugin, if one is ever added back, moves with the main plugin (UNI-748): same version, both bumped.
 market() { # its version, then "mcp" for a market plugin with its own MCP server
   mkdir -p "$t/r/plugins/market/.claude-plugin" "$t/r/plugins/market/vendor"
   printf '{\n  "name": "market",\n  "version": "%s",\n  "y": 2\n}\n' "$1" > "$t/r/plugins/market/.claude-plugin/plugin.json"
@@ -134,7 +134,7 @@ market() { # its version, then "mcp" for a market plugin with its own MCP server
 mversion() { sed -n 's/^  "version": "\(.*\)",$/\1/p' "$t/r/plugins/market/.claude-plugin/plugin.json"; }
 setup; market 0.1.14 mcp
 out=$(run) || fail "market: part 1: $out"
-case "$out" in *"git add plugins/tilori/vendor plugins/market/vendor"*) ;; *) fail "market: commit hint: $out" ;; esac
+case "$out" in *"git add plugins/universal-market/vendor plugins/market/vendor"*) ;; *) fail "market: commit hint: $out" ;; esac
 commit_vendor
 out=$(finish) || fail "market: --finish: $out"
 case "$out" in *"0.1.14 -> 0.1.15 (tilori and market)"*) ;; *) fail "market: summary: $out" ;; esac
@@ -143,7 +143,7 @@ grep -q '"y": 2' "$t/r/plugins/market/.claude-plugin/plugin.json" || fail "marke
 # The stub (UNI-768): no .mcp.json, so no bundle copy, but the same version.
 setup; market 0.1.14
 out=$(run) || fail "stub: part 1: $out"
-case "$out" in *"git add plugins/tilori/vendor && git commit"*) ;; *) fail "stub: commit hint: $out" ;; esac
+case "$out" in *"git add plugins/universal-market/vendor && git commit"*) ;; *) fail "stub: commit hint: $out" ;; esac
 commit_vendor
 out=$(finish) || fail "stub: --finish: $out"
 case "$out" in *"0.1.14 -> 0.1.15 (tilori and market)"*) ;; *) fail "stub: summary: $out" ;; esac

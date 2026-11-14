@@ -12,7 +12,7 @@ SENTINEL='{"Authorization":"Bearer tilori-no-agent-key"}'
 
 # A copy of headers.sh next to a stub run-agent.sh.
 stub() { # body of the stub
-  rm -rf "$t/s"; mkdir -p "$t/s"; cp "$repo/plugins/tilori/scripts/headers.sh" "$t/s/"
+  rm -rf "$t/s"; mkdir -p "$t/s"; cp "$repo/plugins/universal-market/scripts/headers.sh" "$t/s/"
   printf '#!/bin/sh\n%s\n' "$1" > "$t/s/run-agent.sh"; chmod +x "$t/s/headers.sh" "$t/s/run-agent.sh"
 }
 run() { (cd / && env -i HOME="$t/home" PATH=/usr/bin:/bin "$t/s/headers.sh" 2>"$t/err"); }
@@ -41,7 +41,7 @@ stub 'exit 0'; rm "$t/s/run-agent.sh"
 # The real scripts and bundled CLI, in an empty HOME: no config, no key.
 mkdir -m 700 "$t/home"
 out=$(cd / && env -i HOME="$t/home" PATH=/usr/bin:/bin:"$(dirname "$(command -v bun 2>/dev/null || echo "$HOME/.bun/bin/bun")")" \
-  CLAUDE_CODE_MCP_SERVER_URL=https://example.invalid/mcp/tilori/v1 "$repo/plugins/tilori/scripts/headers.sh" 2>/dev/null) \
+  CLAUDE_CODE_MCP_SERVER_URL=https://example.invalid/mcp/tilori/v1 "$repo/plugins/universal-market/scripts/headers.sh" 2>/dev/null) \
   || fail "real headers.sh exited non-zero"
 [ "$out" = "$SENTINEL" ] || fail "real headers.sh with no key: $out"
 echo "headers-sentinel: ok"

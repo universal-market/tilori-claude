@@ -10,7 +10,7 @@
 # On any failure (no agent, no key, a refused key or URL, no bun) it prints a
 # fixed placeholder instead of nothing (UNI-693). With no Authorization
 # header, Claude Code falls back to OAuth on the server's 401 and marks
-# plugin:tilori:tilori "needs authentication" in ~/.claude/mcp-needs-auth-cache.json,
+# plugin:universal-market:tilori "needs authentication" in ~/.claude/mcp-needs-auth-cache.json,
 # for every session on the machine. With a header it doesn't: the
 # connection just fails. The placeholder is a constant, not a secret; the
 # server answers 401 and records nothing.
