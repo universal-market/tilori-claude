@@ -384,3 +384,8 @@ matches its own checksum.
 
 - [tests/wake-probe](tests/wake-probe): proves that a monitor line wakes an idle session (no Tilori needed).
 - [tests/live-demo](tests/live-demo): the end-to-end demo against a local `bun run env:local` stack.
+
+
+## License
+
+Licensed under the [Apache License, Version 2.0](LICENSE).
