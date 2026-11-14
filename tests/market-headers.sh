@@ -47,11 +47,14 @@ stub 'exit 1'
 
 stub 'exit 0'
 [ "$(run)" = "$SENTINEL" ] || fail "empty helper: $(run)"
+# The placeholder never carries the paired header (Bastion 56d30062 item 5).
+case "$(run)" in *X-UM-Paired*) fail "placeholder sent the paired header" ;; esac
 stub 'echo "{}"'
 [ "$(run)" = "$SENTINEL" ] || fail "helper printing {}: $(run)"
 
 stub 'echo "{\"Authorization\":\"Bearer mcp_sk_stub\"}"; echo "secret detail" >&2'
-[ "$(run)" = '{"Authorization":"Bearer mcp_sk_stub"}' ] || fail "key not passed through unchanged: $(run)"
+# UNI-865 phase 0: the key goes through unchanged, with the paired header.
+[ "$(run)" = '{"Authorization":"Bearer mcp_sk_stub","X-UM-Paired":"1"}' ] || fail "key not passed through with the paired header: $(run)"
 [ ! -s "$t/err" ] || fail "key path wrote to stderr: $(cat "$t/err")"
 
 stub 'exit 0'; rm "$t/s/run-agent.sh"
@@ -103,7 +106,7 @@ real() { # server URL
   (cd / && env -i HOME="$t/home2" PATH=/usr/bin:/bin:"$(dirname "$(command -v bun 2>/dev/null || echo "$HOME/.bun/bin/bun")")" \
     CLAUDE_CODE_MCP_SERVER_URL="$1" "$repo/plugins/universal-market/scripts/market-headers.sh" 2>/dev/null)
 }
-KEYED='{"Authorization":"Bearer mcp_sk_market_headers_probe_dummy"}'
+KEYED='{"Authorization":"Bearer mcp_sk_market_headers_probe_dummy","X-UM-Paired":"1"}'
 out=$(real https://market.example.test/mcp/v1) || fail "real headers.sh exited non-zero"
 [ "$out" = "$KEYED" ] || fail "market_url did not get the key: $out"
 [ "$(real https://evil.example.test/mcp/v1)" = "$SENTINEL" ] || fail "another host on /mcp/v1 got: $(real https://evil.example.test/mcp/v1)"

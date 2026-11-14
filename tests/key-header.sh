@@ -159,7 +159,10 @@ chmod +x "$t/s/"*.sh
 for pair in "headers.sh $URL" "market-headers.sh $MARKET"; do
   s=${pair%% *}; u=${pair#* }
   out=$(cd / && env -i HOME="$h" PATH=/usr/bin:/bin CLAUDE_CODE_MCP_SERVER_URL="$u" "$t/s/$s" 2>"$t/err") || fail "$s exited non-zero"
-  [ "$out" = "{\"Authorization\":\"Bearer $KEY\"}" ] || fail "$s without a runtime: $out"
+  # UNI-865 phase 0: the Market helper adds the paired header with the key.
+  want="{\"Authorization\":\"Bearer $KEY\"}"
+  [ "$s" = market-headers.sh ] && want="{\"Authorization\":\"Bearer $KEY\",\"X-UM-Paired\":\"1\"}"
+  [ "$out" = "$want" ] || fail "$s without a runtime: $out"
   [ ! -s "$t/err" ] || fail "$s wrote to stderr: $(cat "$t/err")"
 done
 # Refused by key-header.sh: the helper asks run-agent.sh, and its answer stands.

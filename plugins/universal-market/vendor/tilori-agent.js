@@ -6975,19 +6975,127 @@ var require_dist = __commonJS(function(exports, module) {
   exports.default = formatsPlugin;
 });
 
+// src/rule-check.ts
+import { closeSync, constants, fstatSync, openSync, readSync, statSync } from "fs";
+import { join } from "path";
+var PAIRED_HIDDEN_TOOLS = [
+  "list_contract_templates",
+  "get_contract_template",
+  "list_contracts",
+  "get_contract",
+  "propose_contract",
+  "get_agent",
+  "update_agent_profile",
+  "list_agents",
+  "create_agent",
+  "update_agent",
+  "claim_agent",
+  "list_keys",
+  "create_key",
+  "rotate_key",
+  "revoke_key"
+];
+var PREFIX = "mcp__plugin_universal-market_";
+var MAX_SETTINGS_BYTES = 1e6;
+function covers(rule, server, tool) {
+  const base = PREFIX + server;
+  return rule === base || rule === `${base}__*` || rule === `${base}__${tool}`;
+}
+function settingsFiles(env) {
+  const files = [];
+  const userDir = env.CLAUDE_CONFIG_DIR || (env.HOME ? join(env.HOME, ".claude") : "");
+  if (userDir.startsWith("/"))
+    files.push(join(userDir, "settings.json"));
+  const project = env.CLAUDE_PROJECT_DIR ?? "";
+  if (project.startsWith("/"))
+    files.push(join(project, ".claude", "settings.json"), join(project, ".claude", "settings.local.json"));
+  return files;
+}
+function readCapped(file) {
+  try {
+    if (!statSync(file).isFile())
+      return null;
+  } catch {
+    return null;
+  }
+  let fd;
+  try {
+    fd = openSync(file, constants.O_RDONLY | constants.O_NONBLOCK);
+  } catch {
+    return null;
+  }
+  try {
+    const st = fstatSync(fd);
+    if (!st.isFile() || st.size > MAX_SETTINGS_BYTES)
+      return null;
+    const buf = Buffer.alloc(MAX_SETTINGS_BYTES + 1);
+    let used = 0;
+    for (;; ) {
+      const n = readSync(fd, buf, used, buf.length - used, null);
+      if (n === 0)
+        break;
+      used += n;
+      if (used > MAX_SETTINGS_BYTES)
+        return null;
+    }
+    return buf.subarray(0, used).toString("utf8");
+  } catch {
+    return null;
+  } finally {
+    closeSync(fd);
+  }
+}
+function readRules(files) {
+  const rules = { deny: [], ask: [] };
+  for (const file of files) {
+    const text = readCapped(file);
+    if (text === null)
+      continue;
+    let parsed;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      continue;
+    }
+    const permissions = parsed?.permissions;
+    if (!permissions || typeof permissions !== "object")
+      continue;
+    for (const kind of ["deny", "ask"]) {
+      const list = permissions[kind];
+      if (Array.isArray(list)) {
+        for (const rule of list)
+          if (typeof rule === "string")
+            rules[kind].push(rule.trim());
+      }
+    }
+  }
+  return rules;
+}
+function uncoveredTools(rules) {
+  return PAIRED_HIDDEN_TOOLS.filter((tool) => ["deny", "ask"].some((kind) => rules[kind].some((r) => covers(r, "market", tool)) && !rules[kind].some((r) => covers(r, "tilori", tool)) && !rules.deny.some((r) => covers(r, "tilori", tool))));
+}
+function ruleWarning(tools) {
+  if (!tools.length)
+    return null;
+  return `Universal Market plugin: a Claude Code deny or ask rule covers the Market copy of ${tools.join(", ")}, ` + `but sessions now use the Tilori copy of these tools, which that rule does not cover. ` + `To keep the rule, add the same rule for ${PREFIX}tilori__<tool> (or ${PREFIX}tilori__*) in your Claude Code settings. ` + `Nothing was changed in your settings.`;
+}
+function checkRules(env) {
+  return ruleWarning(uncoveredTools(readRules(settingsFiles(env))));
+}
+
 // src/cli.ts
 import { spawn as spawn4 } from "child_process";
-import { existsSync as existsSync6, readdirSync as readdirSync4, statSync as statSync2 } from "fs";
-import { isAbsolute as isAbsolute3, join as join8 } from "path";
+import { existsSync as existsSync6, readdirSync as readdirSync4, statSync as statSync3 } from "fs";
+import { isAbsolute as isAbsolute3, join as join9 } from "path";
 
 // src/activity.ts
-import { closeSync, constants, futimesSync, lstatSync as lstatSync3, openSync, readFileSync as readFileSync3, writeSync } from "fs";
-import { dirname as dirname4, join as join4 } from "path";
+import { closeSync as closeSync2, constants as constants2, futimesSync, lstatSync as lstatSync3, openSync as openSync2, readFileSync as readFileSync3, writeSync } from "fs";
+import { dirname as dirname4, join as join5 } from "path";
 
 // src/ipc.ts
 import { existsSync as existsSync3, lstatSync as lstatSync2, chmodSync as chmodSync2, unlinkSync as unlinkSync2 } from "fs";
 import { createConnection, createServer } from "net";
-import { dirname as dirname3, join as join3 } from "path";
+import { dirname as dirname3, join as join4 } from "path";
 import { randomUUID } from "crypto";
 
 // src/keys.ts
@@ -7003,10 +7111,10 @@ import {
   writeFileSync
 } from "fs";
 import { homedir } from "os";
-import { dirname, isAbsolute, join, resolve } from "path";
+import { dirname, isAbsolute, join as join2, resolve } from "path";
 var HANDLE_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 function defaultTiloriHome() {
-  return join(homedir(), ".config", "tilori");
+  return join2(homedir(), ".config", "tilori");
 }
 function tiloriHome() {
   return process.env.TILORI_HOME || defaultTiloriHome();
@@ -7027,10 +7135,10 @@ function realPath(p) {
 function expandTilde(p) {
   if (p === "~")
     return homedir();
-  return p.startsWith("~/") ? join(homedir(), p.slice(2)) : p;
+  return p.startsWith("~/") ? join2(homedir(), p.slice(2)) : p;
 }
 function allowedHomes() {
-  const path = join(defaultTiloriHome(), "config.json");
+  const path = join2(defaultTiloriHome(), "config.json");
   if (!existsSync(path))
     return [];
   assertPrivate(path);
@@ -7051,7 +7159,7 @@ function allowedHome(dir) {
     return want;
   if (allowedHomes().some((h) => realPath(h) === want))
     return want;
-  throw new Error(`The Tilori home ${dir} is not listed in "homes" in ${join(defaultTiloriHome(), "config.json")}. ` + `Only the default home and the homes listed there can be used; add it there by hand to allow it: "homes": [${JSON.stringify(dir)}].`);
+  throw new Error(`The Tilori home ${dir} is not listed in "homes" in ${join2(defaultTiloriHome(), "config.json")}. ` + `Only the default home and the homes listed there can be used; add it there by hand to allow it: "homes": [${JSON.stringify(dir)}].`);
 }
 function assertHomeAllowed() {
   const set = process.env.TILORI_HOME;
@@ -7066,7 +7174,7 @@ function validateHandle(handle) {
   return h;
 }
 function keyPath(handle) {
-  return join(tiloriHome(), "agents", `${validateHandle(handle)}.key`);
+  return join2(tiloriHome(), "agents", `${validateHandle(handle)}.key`);
 }
 function currentUid() {
   return typeof process.getuid === "function" ? process.getuid() : undefined;
@@ -7099,7 +7207,7 @@ function readKey(handle) {
     throw new Error(`No key for agent "${validateHandle(handle)}". Run: tilori-agent init --agent ${validateHandle(handle)}`);
   }
   assertPrivate(home, true);
-  assertPrivate(join(home, "agents"), true);
+  assertPrivate(join2(home, "agents"), true);
   assertPrivate(path);
   const key = readFileSync(path, "utf8").trim();
   if (!key || /\s/.test(key))
@@ -7139,7 +7247,7 @@ function writeKey(handle, key) {
   if (!trimmed || /\s/.test(trimmed))
     throw new Error("Key is empty or contains whitespace.");
   ensurePrivateDir(tiloriHome());
-  ensurePrivateDir(join(tiloriHome(), "agents"));
+  ensurePrivateDir(join2(tiloriHome(), "agents"));
   return writePrivateFile(keyPath(handle), trimmed + `
 `);
 }
@@ -7164,10 +7272,10 @@ function redact(text, secrets = []) {
 
 // src/config.ts
 import { existsSync as existsSync2, readdirSync, readFileSync as readFileSync2 } from "fs";
-import { dirname as dirname2, join as join2 } from "path";
+import { dirname as dirname2, join as join3 } from "path";
 
 // src/version.ts
-var VERSION = "0.3.0";
+var VERSION = "0.3.1";
 
 // src/config.ts
 var DEFAULT_WAKES_PER_HOUR = 20;
@@ -7345,7 +7453,7 @@ function policyText(p, identity = []) {
 `);
 }
 function configPath() {
-  return join2(tiloriHome(), "config.json");
+  return join3(tiloriHome(), "config.json");
 }
 function loadConfig(path = configPath()) {
   if (!existsSync2(path))
@@ -7400,12 +7508,12 @@ function headersAllowText(config, agents) {
 ` : "");
 }
 function writeHeadersAllow(config, home) {
-  const dir = join2(home, "agents");
+  const dir = join3(home, "agents");
   let agents = [];
   if (existsSync2(dir)) {
     agents = readdirSync(dir).filter((f) => f.endsWith(".key")).map((f) => f.slice(0, -".key".length)).filter((h) => HANDLE_RE.test(h));
   }
-  writePrivateFile(join2(home, HEADERS_ALLOW), headersAllowText(config, agents));
+  writePrivateFile(join3(home, HEADERS_ALLOW), headersAllowText(config, agents));
 }
 function resolveAgent(config, explicit) {
   const raw = explicit || process.env.TILORI_AGENT || config.default_agent;
@@ -7924,9 +8032,9 @@ function socketPath() {
   if (process.env.TILORI_SOCKET)
     return process.env.TILORI_SOCKET;
   if (isOtherHome())
-    return join3(tiloriHome(), "run", "router.sock");
+    return join4(tiloriHome(), "run", "router.sock");
   const runtime = process.env.XDG_RUNTIME_DIR;
-  return runtime ? join3(runtime, "tilori", "router.sock") : join3(tiloriHome(), "run", "router.sock");
+  return runtime ? join4(runtime, "tilori", "router.sock") : join4(tiloriHome(), "run", "router.sock");
 }
 function assertOwnedSocket(path) {
   assertPrivate(dirname3(path), true);
@@ -8181,29 +8289,29 @@ function activityDir() {
   return dirname4(socketPath());
 }
 function touchSignal(dir, kind, handle) {
-  const path = join4(dir, `${kind}-${validateHandle(handle)}`);
-  const fd = openSync(path, constants.O_WRONLY | constants.O_CREAT | (constants.O_NOFOLLOW ?? 0), 384);
+  const path = join5(dir, `${kind}-${validateHandle(handle)}`);
+  const fd = openSync2(path, constants2.O_WRONLY | constants2.O_CREAT | (constants2.O_NOFOLLOW ?? 0), 384);
   try {
     const now = new Date;
     futimesSync(fd, now, now);
   } finally {
-    closeSync(fd);
+    closeSync2(fd);
   }
 }
 function writePushSignal(dir, handle, s) {
-  const path = join4(dir, `push-${validateHandle(handle)}`);
-  const fd = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | (constants.O_NOFOLLOW ?? 0), 384);
+  const path = join5(dir, `push-${validateHandle(handle)}`);
+  const fd = openSync2(path, constants2.O_WRONLY | constants2.O_CREAT | constants2.O_TRUNC | (constants2.O_NOFOLLOW ?? 0), 384);
   try {
     writeSync(fd, JSON.stringify({ state: s.state, since: s.since, ...s.next !== undefined ? { next: s.next } : {} }));
   } finally {
-    closeSync(fd);
+    closeSync2(fd);
   }
 }
 var PUSH_STATES = new Set(["connecting", "live", "reconnecting", "down", "refused"]);
 function readPushSignal(handle, dir = activityDir()) {
   if (!HANDLE_RE.test(handle))
     return null;
-  const path = join4(dir, `push-${handle}`);
+  const path = join5(dir, `push-${handle}`);
   try {
     const st = lstatSync3(path);
     if (!st.isFile() || st.size > 512)
@@ -8264,8 +8372,8 @@ function promptSignal(handle, dir = activityDir()) {
   const tracked = isDir(dir);
   if (!HANDLE_RE.test(handle))
     return { blockedSince: null, reports: false, tracked };
-  const blocked = mtime(join4(dir, `blocked-${handle}`));
-  const activity = mtime(join4(dir, `activity-${handle}`));
+  const blocked = mtime(join5(dir, `blocked-${handle}`));
+  const activity = mtime(join5(dir, `activity-${handle}`));
   const reports = blocked !== null || activity !== null;
   if (blocked === null || activity !== null && activity >= blocked)
     return { blockedSince: null, reports, tracked };
@@ -8274,7 +8382,7 @@ function promptSignal(handle, dir = activityDir()) {
 var clock = (ms) => `${new Date(ms).toISOString().slice(11, 16)} UTC`;
 var WATCHED_MS = 120000;
 function watchSignal(handle, dir = activityDir(), router = false) {
-  const at = (kind) => HANDLE_RE.test(handle) ? mtime(join4(dir, `${kind}-${handle}`)) : null;
+  const at = (kind) => HANDLE_RE.test(handle) ? mtime(join5(dir, `${kind}-${handle}`)) : null;
   const activity = at("activity");
   return {
     attempting: at("attempting"),
@@ -20504,7 +20612,7 @@ function showText(agent, s, usage) {
 }
 
 // src/update-notice.ts
-import { closeSync as closeSync2, constants as constants2, fstatSync, openSync as openSync2, readSync } from "fs";
+import { closeSync as closeSync3, constants as constants3, fstatSync as fstatSync2, openSync as openSync3, readSync as readSync2 } from "fs";
 var VERSION2 = /^\d{1,6}\.\d{1,6}\.\d{1,6}$/;
 var MAX_MANIFEST_BYTES = 1e6;
 var RECHECK_MS = 60000;
@@ -20538,19 +20646,19 @@ function installedVersion(text, key) {
 function readBounded(path) {
   let fd;
   try {
-    fd = openSync2(path, constants2.O_RDONLY | constants2.O_NONBLOCK);
-    const st = fstatSync(fd);
+    fd = openSync3(path, constants3.O_RDONLY | constants3.O_NONBLOCK);
+    const st = fstatSync2(fd);
     if (!st.isFile() || st.size > MAX_MANIFEST_BYTES)
       return null;
     const size = st.size;
     const buf = Buffer.alloc(size);
-    const n = readSync(fd, buf, 0, size, 0);
+    const n = readSync2(fd, buf, 0, size, 0);
     return buf.subarray(0, n).toString("utf8");
   } catch {
     return null;
   } finally {
     if (fd !== undefined)
-      closeSync2(fd);
+      closeSync3(fd);
   }
 }
 
@@ -20590,7 +20698,7 @@ class UpdateNotice {
 }
 
 // src/upload.ts
-import { closeSync as closeSync3, constants as constants3, fstatSync as fstatSync2, openSync as openSync3, readlinkSync, readSync as readSync2, realpathSync as realpathSync2 } from "fs";
+import { closeSync as closeSync4, constants as constants4, fstatSync as fstatSync3, openSync as openSync4, readlinkSync, readSync as readSync3, realpathSync as realpathSync2 } from "fs";
 import { sep } from "path";
 var MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 var UPLOAD_TIMEOUT_MS = 60000;
@@ -20616,7 +20724,7 @@ function realHome() {
 function readUploadFile(path) {
   let fd;
   try {
-    fd = openSync3(path, constants3.O_RDONLY | constants3.O_NOFOLLOW | constants3.O_NONBLOCK);
+    fd = openSync4(path, constants4.O_RDONLY | constants4.O_NOFOLLOW | constants4.O_NONBLOCK);
   } catch (cause) {
     const code = cause.code;
     if (code === "ELOOP" || code === "EMLINK")
@@ -20628,7 +20736,7 @@ function readUploadFile(path) {
     throw new LocalRefusal(`can't open ${path} (${code ?? "error"})`);
   }
   try {
-    const st = fstatSync2(fd);
+    const st = fstatSync3(fd);
     if (!st.isFile())
       throw new LocalRefusal("not a regular file: pass a file");
     const real = fdPath(fd, path);
@@ -20640,7 +20748,7 @@ function readUploadFile(path) {
     const bytes = new Uint8Array(st.size);
     let read = 0;
     while (read < st.size) {
-      const n = readSync2(fd, bytes, read, st.size - read, null);
+      const n = readSync3(fd, bytes, read, st.size - read, null);
       if (n === 0)
         break;
       read += n;
@@ -20649,7 +20757,7 @@ function readUploadFile(path) {
       throw new LocalRefusal("the file changed while it was read; run the command again");
     return { bytes, size: st.size };
   } finally {
-    closeSync3(fd);
+    closeSync4(fd);
   }
 }
 var startsWith = (b, sig, at = 0) => sig.every((v, i) => b[at + i] === v);
@@ -20763,12 +20871,12 @@ async function upload(o) {
 import { spawn as spawn3 } from "child_process";
 import { existsSync as existsSync4, readdirSync as readdirSync2, readFileSync as readFileSync4, unlinkSync as unlinkSync3 } from "fs";
 import { userInfo } from "os";
-import { join as join6 } from "path";
+import { join as join7 } from "path";
 
 // src/plugin-sync.ts
 import { spawn as spawn2 } from "child_process";
-import { accessSync, constants as constants4, statSync } from "fs";
-import { delimiter, isAbsolute as isAbsolute2, join as join5 } from "path";
+import { accessSync, constants as constants5, statSync as statSync2 } from "fs";
+import { delimiter, isAbsolute as isAbsolute2, join as join6 } from "path";
 var PLUGIN_ID = "universal-market@tilori-claude";
 var LAUNCHER = "~/.claude/plugins/data/universal-market-tilori-claude/tilori-agent";
 var SYNC_COMMAND = `sh ${LAUNCHER} sync-plugin`;
@@ -20776,11 +20884,11 @@ function claudeBinary(path = process.env.PATH ?? "") {
   for (const dir of path.split(delimiter)) {
     if (!dir || !isAbsolute2(dir))
       continue;
-    const candidate = join5(dir, "claude");
+    const candidate = join6(dir, "claude");
     try {
-      const st = statSync(candidate);
+      const st = statSync2(candidate);
       if (st.isFile()) {
-        accessSync(candidate, constants4.X_OK);
+        accessSync(candidate, constants5.X_OK);
         return candidate;
       }
     } catch {}
@@ -20984,10 +21092,10 @@ function allowedUrl(u, origin) {
   return u.protocol === "http:" && isLoopback(u) && origin.protocol === "http:" && isLoopback(origin);
 }
 function pendingDir() {
-  return join6(tiloriHome(), "pending");
+  return join7(tiloriHome(), "pending");
 }
 function pendingPath(handle) {
-  return join6(pendingDir(), `${validateHandle(handle)}.json`);
+  return join7(pendingDir(), `${validateHandle(handle)}.json`);
 }
 function writePending(p) {
   ensurePrivateDir(tiloriHome());
@@ -21453,7 +21561,7 @@ async function awaitAgentKey(o) {
 
 // src/connect.ts
 import { existsSync as existsSync5, readdirSync as readdirSync3, renameSync as renameSync2 } from "fs";
-import { join as join7 } from "path";
+import { join as join8 } from "path";
 function shellWord(v) {
   return /^[A-Za-z0-9._~:/%@+=,-]+$/.test(v) ? v : `'${v.replaceAll("'", `'\\''`)}'`;
 }
@@ -21563,11 +21671,11 @@ async function runConnect(o) {
     await m.close();
   }
   if (moving) {
-    const dir = join7(tiloriHome(), "agents");
+    const dir = join8(tiloriHome(), "agents");
     const stamp = new Date(o.now?.() ?? Date.now()).toISOString().replace(/[:.]/g, "-");
     const files = existsSync5(dir) ? readdirSync3(dir).filter((f) => f.endsWith(".key")) : [];
     for (const f of files)
-      renameSync2(join7(dir, f), join7(dir, `${f}.replaced-${stamp}`));
+      renameSync2(join8(dir, f), join8(dir, `${f}.replaced-${stamp}`));
     config.agents = {};
     delete config.default_agent;
   }
@@ -22013,7 +22121,7 @@ async function readSecretFromStdin(prompt) {
   });
 }
 function agentsWithKeys() {
-  const dir = join8(tiloriHome(), "agents");
+  const dir = join9(tiloriHome(), "agents");
   if (!existsSync6(dir))
     return [];
   return readdirSync4(dir).filter((f) => f.endsWith(".key")).map((f) => f.slice(0, -4)).filter((h) => {
@@ -22037,7 +22145,7 @@ function launchCwd(env = process.env, fallback = process.cwd()) {
   const want = env.TILORI_LAUNCH_CWD;
   if (want && isAbsolute3(want)) {
     try {
-      if (statSync2(want).isDirectory())
+      if (statSync3(want).isDirectory())
         return want;
     } catch {}
   }
@@ -22052,7 +22160,7 @@ async function launchClaude(args) {
     if (a === "--settings" || a.startsWith("--settings="))
       throw new Error("claude sets Claude Code's --settings itself; pass other settings in a settings file instead.");
   const home = allowedHome(dir);
-  const config = loadConfig(join8(home, "config.json"));
+  const config = loadConfig(join9(home, "config.json"));
   const env = { TILORI_HOME: home, TILORI_MCP_URL: buildMcpUrl(config.url).toString() };
   if (config.market_url)
     env.TILORI_MARKET_URL = buildMarketUrl(config.market_url).toString();
@@ -22496,7 +22604,7 @@ async function main(argv = process.argv.slice(2)) {
         const url = keyUrl(config, str(args, "url"));
         const handles = agentsWithKeys();
         if (!handles.length)
-          throw new Error(`No agent keys in ${join8(tiloriHome(), "agents")}. Run tilori-agent init first.`);
+          throw new Error(`No agent keys in ${join9(tiloriHome(), "agents")}. Run tilori-agent init first.`);
         const agents = handles.map((handle) => {
           const s = config.agents?.[handle] ?? {};
           const apiKey = readKey(handle);
@@ -22548,9 +22656,19 @@ async function main(argv = process.argv.slice(2)) {
         if (trust.inert)
           log(`trust_server is set but not applied: ${trust.inert}.`);
         const identity = sessionIdentityLines(config, agent, process.env, Boolean(str(args, "agent")));
-        const text = policyText(coordinationPolicy(config, agent), identity);
+        let rules = null;
+        try {
+          rules = checkRules(process.env);
+        } catch {
+          rules = null;
+        }
+        const text = policyText(coordinationPolicy(config, agent), identity) + (rules ? `
+${rules}` : "");
         if (args.flags.has("hook")) {
-          process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: text } }) + `
+          process.stdout.write(JSON.stringify({
+            ...rules ? { systemMessage: rules } : {},
+            hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: text }
+          }) + `
 `);
         } else
           console.log(text);
@@ -22574,7 +22692,7 @@ async function main(argv = process.argv.slice(2)) {
         if (!handles.length) {
           if (pending.length)
             return 0;
-          console.log(`No agents on this machine yet: no keys in ${join8(tiloriHome(), "agents")}. ` + "Run tilori-agent setup [<handle>] to create and connect one, or tilori-agent init --agent <handle> --url <tilori-mcp-url> for an existing key");
+          console.log(`No agents on this machine yet: no keys in ${join9(tiloriHome(), "agents")}. ` + "Run tilori-agent setup [<handle>] to create and connect one, or tilori-agent init --agent <handle> --url <tilori-mcp-url> for an existing key");
           return 0;
         }
         if (serverLine)
