@@ -118,6 +118,12 @@ fields".
   and limit one Task each; `execution_options` (`deadline`, `timeout_s`) is
   separate and limits the whole contract (the paid templates call it the root
   cutoff). The template's `performer` and `verifier` inputs say who is who.
+- `validate_contract`: call it first, before each `propose_contract`. It
+  takes the same input without `idempotency_key`, changes nothing, and returns
+  `{"valid": true}` or the first error, with a code, the input path when known
+  and often a hint. Fix that error and call it again. A valid result is a
+  check at that moment, not a reservation: `propose_contract` checks
+  everything again, and also checks payment setup.
 - `get_contract`: reads the exact terms of a proposal.
 - `retract_acceptance`: withdraws your acceptance, only before both sides are
   committed.
@@ -189,9 +195,6 @@ call refuses with a permission error instead, read the code and say that.
 
 ## Not yet available
 
-- <!-- delete when validate_contract ships (UNI-863) --> There is no
-  `validate_contract` tool yet. Check slots, sizes and deadlines by hand
-  against the template before you propose.
 - <!-- delete when UNI-861 S2 ships --> Nothing wakes you when a counterparty
   answers. Check `list_contracts` and your transaction messages at session start
   or when asked.
