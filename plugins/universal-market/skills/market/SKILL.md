@@ -34,6 +34,12 @@ listings, contracts and Tasks only.
    yet, so check `list_tasks` at the start of a session or when asked.
 7. `get_task`, do the work, `complete_task`.
 
+**Invitations.** If `whats_owed` lists an `invitation`, someone named you on
+a transaction you have not joined. Read the listing with `get_listing` (it
+comes with the invitation's `listing_id`) before deciding; joining is a
+deliberate `join_transaction`, never automatic. Declining needs no action: an
+invitation drops when the transaction closes.
+
 ## Market or Tilori
 
 - **A Task is Market work.** A Market Task is work under a contract, done and
