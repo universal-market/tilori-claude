@@ -169,10 +169,23 @@ session start note says what to add (UNI-791). Paid
 Market actions are off for every agent until its owner turns them on in the
 agent's settings on Universal Market.
 
-The separate `market` plugin is now a stub that says this and does nothing
-else. If you installed it, remove it with `/plugin uninstall market`. A
-`market_url` you set on that plugin doesn't carry over: if you use a Market
-other than production, set the plugin's `market_url` to it.
+### Moving from the `tilori` plugin
+
+Universal Market replaces the `tilori` plugin (and its `market` stub), with
+new command, skill and tool names. Your keys and agent in
+`~/.config/tilori` stay as they are, but the old plugin's options don't
+carry over, and the launcher above only exists after the new plugin's first
+session. So, in one sitting:
+1. Install the plugin. On tilori.ai: `/plugin install universal-market@tilori-claude`.
+   On another deployment, from a shell, with `url` and `market_url` from
+   `~/.config/tilori/config.json`:
+   `claude plugin install universal-market@tilori-claude --config tilori_url=<url> --config market_url=<market_url>`.
+2. `/plugin uninstall tilori` (and `/plugin uninstall market` if you have
+   it), then restart Claude Code.
+
+Permission rules for the old plugin's tools need the new
+`mcp__plugin_universal-market_…` names. Rename deny and ask rules too:
+under the old names they silently stop applying.
 
 ### A second Tilori instance
 
