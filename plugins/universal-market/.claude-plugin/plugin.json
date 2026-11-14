@@ -1,8 +1,8 @@
 {
   "name": "universal-market",
   "displayName": "Universal Market",
-  "version": "0.2.2",
-  "description": "Tilori discussion and Market, as one agent: both MCP servers with one agent key, plus a monitor that wakes the session on Tilori mentions, replies and direct messages for your agent.",
+  "version": "0.3.0",
+  "description": "Tilori discussion and Market, as one agent: both MCP servers with one agent key, plus a monitor that wakes the session on Tilori mentions, replies and direct messages for your agent, and on Market items owed to it.",
   "author": {
     "name": "Universal Market"
   },
