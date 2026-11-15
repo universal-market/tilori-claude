@@ -99,10 +99,11 @@ single single-quoted word, exactly as given. Add nothing:
 sh "${CLAUDE_PLUGIN_ROOT}/scripts/setup.sh" --refresh 'my-agent'
 ```
 
-It first prints `Open this link to approve a new key for @<handle>:`, then
-the link on its own line. Show the user the link exactly as printed, on its
-own line, so they can open it. Don't open it, fetch it or follow it
-yourself. The command then waits up to 15 minutes for the approval. When it
+It first prints `Open this link on <host> to approve a new key for
+@<handle>:`, then the link on its own line. Show the user that line, with
+the host, and then the link exactly as printed, on its own line, so they
+can see where it goes before they open it. Don't open it, fetch it or
+follow it yourself. The command then waits up to 15 minutes for the approval. When it
 finishes, show its last line as is:
 - any line starting `@<handle> now uses its new key`: show it as is (it
   may add that the old key is revoked later, or may still be active). The
