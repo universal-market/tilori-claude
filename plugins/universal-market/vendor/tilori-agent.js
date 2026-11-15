@@ -7085,8 +7085,8 @@ function checkRules(env) {
 
 // src/cli.ts
 import { spawn as spawn4 } from "child_process";
-import { existsSync as existsSync6, readdirSync as readdirSync4, statSync as statSync3 } from "fs";
-import { isAbsolute as isAbsolute3, join as join9 } from "path";
+import { existsSync as existsSync7, readdirSync as readdirSync4, statSync as statSync3 } from "fs";
+import { isAbsolute as isAbsolute3, join as join10 } from "path";
 
 // src/activity.ts
 import { closeSync as closeSync2, constants as constants2, futimesSync, lstatSync as lstatSync3, openSync as openSync2, readFileSync as readFileSync3, writeSync } from "fs";
@@ -7275,7 +7275,7 @@ import { existsSync as existsSync2, readdirSync, readFileSync as readFileSync2 }
 import { dirname as dirname2, join as join3 } from "path";
 
 // src/version.ts
-var VERSION = "0.3.1";
+var VERSION = "0.3.2";
 
 // src/config.ts
 var DEFAULT_WAKES_PER_HOUR = 20;
@@ -21559,9 +21559,289 @@ async function awaitAgentKey(o) {
   return null;
 }
 
-// src/connect.ts
-import { existsSync as existsSync5, readdirSync as readdirSync3, renameSync as renameSync2 } from "fs";
+// src/refresh.ts
+import { existsSync as existsSync5, readFileSync as readFileSync5, unlinkSync as unlinkSync4 } from "fs";
 import { join as join8 } from "path";
+var REFRESH_PATH = "/api/v1/agents/refresh";
+var COMPLETE_PATH = "/api/v1/agents/refresh/complete";
+function oldKeyPath(handle) {
+  return keyPath(handle) + ".old";
+}
+function dropStaleBackup(handle) {
+  const path = oldKeyPath(handle);
+  if (!existsSync5(path))
+    return false;
+  assertPrivate(path);
+  if (readFileSync5(path, "utf8").trim() !== readKey(handle))
+    return false;
+  deleteFile(path);
+  return true;
+}
+function refreshPath(handle) {
+  return join8(pendingDir(), `${validateHandle(handle)}.refresh.json`);
+}
+var REFRESH_LINES = {
+  noKey: (handle) => `@${handle} has no key here to refresh. Run /universal-market:setup ${handle} to connect it first.`,
+  unfinished: (handle) => `An earlier key refresh for @${handle} hasn't finished. It finishes when the next session with the Tilori plugin starts; start one, then try again.`,
+  link: (handle) => `Open this link to approve a new key for @${handle}:`,
+  wait: "Waiting for your approval in the browser. Once you approve, the agent switches to the new key and revokes the old one.",
+  done: (handle) => `@${handle} now uses its new key, and the old key is revoked.`,
+  doneLater: (handle) => `@${handle} now uses its new key. The old key will be revoked when the next session with the Tilori plugin starts.`,
+  oldMayLive: (handle) => `@${handle} now uses its new key, but the old key may still be active. Revoke it under Account \u2192 Agents.`,
+  kept: (handle) => `The new key for @${handle} didn't work, so I kept the old one. Run /universal-market:setup --refresh ${handle} again to retry.`,
+  timeout: (handle) => `Didn't see an approval in 15 minutes. The link stays valid for a day: run /universal-market:setup --refresh ${handle} again to keep waiting.`,
+  expired: (handle) => `The approval link for @${handle} expired or was already used. Run /universal-market:setup --refresh ${handle} again.`,
+  pending: (handle) => `A key refresh for @${handle} is already waiting for approval, and its link isn't on this machine. It expires within a day.`
+};
+function refreshRefusal(handle, status, code = "") {
+  if (status === 401)
+    return `Tilori didn't accept @${handle}'s current key (HTTP 401${code}), so it can't be refreshed. Connect a new agent with /universal-market:setup <new-handle>.`;
+  if (status === 403 && code.trim() === "OPERATION_NOT_ALLOWED")
+    return REFRESH_LINES.pending(handle);
+  if (status === 429)
+    return "Tilori is rate-limiting key refreshes (3 an hour per agent); try again later.";
+  if (status >= 500)
+    return `Tilori had a server error (HTTP ${status}); try again in a minute.`;
+  return `Tilori refused the key refresh (HTTP ${status}${code}).`;
+}
+function writeRefresh(p) {
+  ensurePrivateDir(tiloriHome());
+  ensurePrivateDir(pendingDir());
+  return writePrivateFile(refreshPath(p.handle), JSON.stringify(p) + `
+`);
+}
+function deleteFile(path) {
+  try {
+    unlinkSync4(path);
+  } catch (cause) {
+    if (cause.code !== "ENOENT")
+      throw cause;
+  }
+}
+function readRefresh(handle) {
+  const path = refreshPath(handle);
+  if (!existsSync5(path))
+    return null;
+  assertPrivate(tiloriHome(), true);
+  assertPrivate(pendingDir(), true);
+  assertPrivate(path);
+  const bad = () => new Error(`${path} is malformed; remove it and run the refresh again.`);
+  let j;
+  try {
+    j = JSON.parse(readFileSync5(path, "utf8"));
+  } catch {
+    throw bad();
+  }
+  const s = (k) => typeof j?.[k] === "string" && j[k].trim() ? j[k] : null;
+  const id = s("id");
+  const key = s("api_key");
+  if (!id || !key || /\s/.test(key) || s("handle") !== validateHandle(handle))
+    throw bad();
+  let origin;
+  const urls = {};
+  try {
+    origin = new URL(s("origin") ?? "");
+    for (const k of ["status_url", "complete_url", "claim_url"])
+      urls[k] = new URL(s(k) ?? "");
+  } catch {
+    throw bad();
+  }
+  if (!allowedUrl(origin, origin) || Object.values(urls).some((u) => u.origin !== origin.origin || !allowedUrl(u, origin)))
+    throw bad();
+  const poll = j.poll_after_seconds;
+  return {
+    id,
+    handle: validateHandle(handle),
+    api_key: key,
+    status_url: urls.status_url.href,
+    complete_url: urls.complete_url.href,
+    claim_url: urls.claim_url.href,
+    expires_at: s("expires_at") ?? "",
+    poll_after_seconds: Number.isInteger(poll) && poll >= 1 && poll <= 60 ? poll : 5,
+    origin: origin.origin,
+    created_at: s("created_at") ?? ""
+  };
+}
+function refreshOrigin() {
+  const config = loadConfig();
+  if (!config.url)
+    throw new SetupInputError("No Tilori server in config.json; run /universal-market:setup first.");
+  const origin = new URL(buildMcpUrl(config.url).origin);
+  if (!allowedUrl(origin, origin))
+    throw new SetupInputError("The configured Tilori server is not https.");
+  return origin;
+}
+async function startRefresh(o) {
+  let res;
+  try {
+    res = await request(new URL(REFRESH_PATH, o.origin), { method: "POST", headers: { authorization: `Bearer ${o.key}`, accept: "application/json" } }, o);
+  } catch (cause) {
+    throw transportFailure(cause, "the key refresh", o.origin.host, o.timeoutMs ?? SETUP_HTTP_TIMEOUT_MS);
+  }
+  if (res.status < 200 || res.status >= 300)
+    throw new Error(refreshRefusal(o.handle, res.status, errorCode(res.json)));
+  const unusable = (why) => new Error(`Tilori's key refresh answer could not be used (${why}); try again.`);
+  if (!res.parsed)
+    throw unusable("not JSON");
+  const j = res.json;
+  const key = j?.api_key;
+  if (typeof key !== "string" || !key.trim() || /\s/.test(key.trim()) || key.length > 200)
+    throw unusable("no usable api_key");
+  const on = (raw, fallback) => {
+    let u;
+    try {
+      u = new URL(typeof raw === "string" ? raw : fallback ?? "", o.origin);
+    } catch {
+      return null;
+    }
+    return u.origin === o.origin.origin && allowedUrl(u, o.origin) ? u : null;
+  };
+  const claim = typeof j?.claim_url === "string" ? on(j.claim_url) : null;
+  const status = on(j?.status_url, "/api/v1/agents/status");
+  const complete = on(j?.complete_url, COMPLETE_PATH);
+  if (!claim)
+    throw unusable("the approval link is not on the Tilori origin");
+  if (!status || !complete)
+    throw unusable("its URLs are not on the Tilori origin");
+  const id = typeof j?.id === "string" && j.id.trim() && j.id.length <= 64 ? j.id : null;
+  if (!id)
+    throw unusable("no id");
+  const now = o.now?.() ?? Date.now();
+  const expires = typeof j?.expires_at === "string" ? Date.parse(j.expires_at) : NaN;
+  const poll = j?.poll_after_seconds;
+  return {
+    id,
+    handle: o.handle,
+    api_key: key.trim(),
+    status_url: status.href,
+    complete_url: complete.href,
+    claim_url: claim.href,
+    expires_at: new Date(Number.isFinite(expires) ? expires : now + 24 * 3600000).toISOString(),
+    poll_after_seconds: Number.isInteger(poll) && poll >= 1 && poll <= 60 ? poll : 5,
+    origin: o.origin.origin,
+    created_at: new Date(now).toISOString()
+  };
+}
+async function completeRefresh(url, key, o) {
+  try {
+    const res = await request(new URL(url), { method: "POST", headers: { authorization: `Bearer ${key}`, accept: "application/json" } }, o);
+    const status = res.json?.status;
+    if (res.status === 200 && (status === "completed" || status === "nothing_pending"))
+      return status;
+    o.log(`the key refresh's completion was refused (HTTP ${res.status}${errorCode(res.json)})`);
+  } catch (cause) {
+    o.log(`could not reach Tilori to complete the key refresh (${cause?.name ?? "error"})`);
+  }
+  return null;
+}
+async function runRefresh(o) {
+  const handle = validateHandle(o.handle);
+  if (!existsSync5(keyPath(handle)))
+    throw new SetupInputError(REFRESH_LINES.noKey(handle));
+  if (!dropStaleBackup(handle) && existsSync5(oldKeyPath(handle))) {
+    o.out(REFRESH_LINES.unfinished(handle));
+    return 1;
+  }
+  const origin = refreshOrigin();
+  const current = readKey(handle);
+  const secrets = [current];
+  const log = (m) => o.log(redact(m, secrets));
+  const now = o.now ?? Date.now;
+  let p = null;
+  try {
+    p = readRefresh(handle);
+  } catch (cause) {
+    log(cause instanceof Error ? cause.message : String(cause));
+  }
+  if (p && (p.origin !== origin.origin || Date.parse(p.expires_at) <= now())) {
+    deleteFile(refreshPath(handle));
+    p = null;
+  }
+  if (!p) {
+    p = await startRefresh({ ...o, handle, origin, key: current, now });
+    writeRefresh(p);
+  }
+  secrets.push(p.api_key);
+  o.out(REFRESH_LINES.link(handle));
+  o.out(p.claim_url);
+  if (!o.noBrowser)
+    openBrowser(p.claim_url, log, o.platform);
+  o.out(REFRESH_LINES.wait);
+  const wait = o.sleep ?? sleep2;
+  const deadline = Math.min(now() + (o.deadlineMs ?? CLAIM_WAIT_MS), Date.parse(p.expires_at) || Infinity);
+  let intervalMs = o.pollIntervalMs ?? p.poll_after_seconds * 1000;
+  while (!o.signal?.aborted) {
+    const ans = await checkStatus(p, o);
+    if (ans.kind === "claimed") {
+      if (ans.handle !== handle) {
+        o.out(REFRESH_LINES.kept(handle));
+        return 1;
+      }
+      return swapKey(handle, current, p, ans.tilori, { ...o, log });
+    }
+    if (ans.kind === "gone" || ans.kind === "unusable") {
+      deleteFile(refreshPath(handle));
+      o.out(REFRESH_LINES.expired(handle));
+      return 1;
+    }
+    if (ans.kind === "retry")
+      log(`status check for @${handle}'s key refresh failed (${ans.why}); trying again`);
+    if (ans.pollAfterMs && o.pollIntervalMs === undefined)
+      intervalMs = ans.pollAfterMs;
+    if (now() >= deadline) {
+      o.out(REFRESH_LINES.timeout(handle));
+      return 1;
+    }
+    await wait(Math.max(0, Math.min(intervalMs, deadline - now())), o.signal);
+  }
+  return 1;
+}
+async function swapKey(handle, current, p, tilori, o) {
+  writePrivateFile(oldKeyPath(handle), current + `
+`);
+  writeKey(handle, p.api_key);
+  const owner = await readOwner(tilori, p.api_key, handle, o);
+  if (!owner) {
+    writeKey(handle, current);
+    deleteFile(oldKeyPath(handle));
+    o.out(REFRESH_LINES.kept(handle));
+    return 1;
+  }
+  const done = await completeRefresh(p.complete_url, p.api_key, o);
+  if (done) {
+    deleteFile(oldKeyPath(handle));
+    deleteFile(refreshPath(handle));
+  }
+  o.out(done === "completed" ? REFRESH_LINES.done(handle) : done ? REFRESH_LINES.oldMayLive(handle) : REFRESH_LINES.doneLater(handle));
+  return 0;
+}
+async function finishRefresh(handle, o) {
+  try {
+    if (!existsSync5(oldKeyPath(handle)) || dropStaleBackup(handle))
+      return null;
+    const key = readKey(handle);
+    const log = (m) => o.log(redact(m, [key]));
+    let url;
+    try {
+      url = readRefresh(handle)?.complete_url ?? new URL(COMPLETE_PATH, refreshOrigin()).href;
+    } catch {
+      url = new URL(COMPLETE_PATH, refreshOrigin()).href;
+    }
+    const done = await completeRefresh(url, key, { ...o, log });
+    if (!done)
+      return null;
+    deleteFile(oldKeyPath(handle));
+    deleteFile(refreshPath(handle));
+    return done === "completed" ? REFRESH_LINES.done(handle) : REFRESH_LINES.oldMayLive(handle);
+  } catch (cause) {
+    o.log(redact(`could not finish @${handle}'s key refresh: ${cause instanceof Error ? cause.message : String(cause)}`));
+    return null;
+  }
+}
+
+// src/connect.ts
+import { existsSync as existsSync6, readdirSync as readdirSync3, renameSync as renameSync2 } from "fs";
+import { join as join9 } from "path";
 function shellWord(v) {
   return /^[A-Za-z0-9._~:/%@+=,-]+$/.test(v) ? v : `'${v.replaceAll("'", `'\\''`)}'`;
 }
@@ -21671,11 +21951,11 @@ async function runConnect(o) {
     await m.close();
   }
   if (moving) {
-    const dir = join8(tiloriHome(), "agents");
+    const dir = join9(tiloriHome(), "agents");
     const stamp = new Date(o.now?.() ?? Date.now()).toISOString().replace(/[:.]/g, "-");
-    const files = existsSync5(dir) ? readdirSync3(dir).filter((f) => f.endsWith(".key")) : [];
+    const files = existsSync6(dir) ? readdirSync3(dir).filter((f) => f.endsWith(".key")) : [];
     for (const f of files)
-      renameSync2(join8(dir, f), join8(dir, `${f}.replaced-${stamp}`));
+      renameSync2(join9(dir, f), join9(dir, `${f}.replaced-${stamp}`));
     config.agents = {};
     delete config.default_agent;
   }
@@ -21882,6 +22162,13 @@ Usage:
       link or the reuse line, 2 for a bad handle or name, 1 when Tilori
       refused or didn't answer. Nothing from Tilori's answers is printed
       except the claim link.
+  tilori-agent setup <handle> --refresh [--no-browser]
+      Replaces the agent's key with a new one its owner approves, for a key
+      made before a permission the agent now needs. Sends the current key
+      only to the configured Tilori server, prints the approval link on its
+      own line, and waits (up to 15 minutes) for the approval. Then it saves
+      the new key, checks it, and revokes the old one. Run it again to resume
+      a refresh that is still waiting. Exit 0 once the new key is in use.
   tilori-agent init --agent <handle> --url <tilori-mcp-url> [--market-url <market-mcp-url>] [--default] [--no-verify]
       Reads the agent's shared key from stdin and stores it at
       ~/.config/tilori/agents/<handle>.key (0600); records url and agent in config.json.
@@ -22121,8 +22408,8 @@ async function readSecretFromStdin(prompt) {
   });
 }
 function agentsWithKeys() {
-  const dir = join9(tiloriHome(), "agents");
-  if (!existsSync6(dir))
+  const dir = join10(tiloriHome(), "agents");
+  if (!existsSync7(dir))
     return [];
   return readdirSync4(dir).filter((f) => f.endsWith(".key")).map((f) => f.slice(0, -4)).filter((h) => {
     try {
@@ -22160,7 +22447,7 @@ async function launchClaude(args) {
     if (a === "--settings" || a.startsWith("--settings="))
       throw new Error("claude sets Claude Code's --settings itself; pass other settings in a settings file instead.");
   const home = allowedHome(dir);
-  const config = loadConfig(join9(home, "config.json"));
+  const config = loadConfig(join10(home, "config.json"));
   const env = { TILORI_HOME: home, TILORI_MCP_URL: buildMcpUrl(config.url).toString() };
   if (config.market_url)
     env.TILORI_MARKET_URL = buildMarketUrl(config.market_url).toString();
@@ -22281,6 +22568,17 @@ async function main(argv = process.argv.slice(2)) {
         const out = (line) => process.stdout.write(line + `
 `);
         try {
+          if (args.flags.has("refresh")) {
+            if (!args.positionals[0])
+              throw new SetupInputError("Name the agent: tilori-agent setup <handle> --refresh.");
+            return await runRefresh({
+              handle: args.positionals[0],
+              noBrowser: args.flags.has("no-browser"),
+              signal,
+              out,
+              log
+            });
+          }
           return await runSetup({
             handle: args.positionals[0],
             name: str(args, "name"),
@@ -22557,6 +22855,10 @@ async function main(argv = process.argv.slice(2)) {
           });
           if (!agent)
             return 0;
+          const refreshed = await finishRefresh(agent, { signal, log });
+          if (refreshed)
+            await new Promise((resolve) => process.stdout.write(refreshed + `
+`, () => resolve()));
           config = loadConfig();
           const running = process.env.TILORI_PLUGIN_VERSION;
           const manifest = process.env.TILORI_PLUGIN_MANIFEST;
@@ -22604,7 +22906,7 @@ async function main(argv = process.argv.slice(2)) {
         const url = keyUrl(config, str(args, "url"));
         const handles = agentsWithKeys();
         if (!handles.length)
-          throw new Error(`No agent keys in ${join9(tiloriHome(), "agents")}. Run tilori-agent init first.`);
+          throw new Error(`No agent keys in ${join10(tiloriHome(), "agents")}. Run tilori-agent init first.`);
         const agents = handles.map((handle) => {
           const s = config.agents?.[handle] ?? {};
           const apiKey = readKey(handle);
@@ -22692,7 +22994,7 @@ ${rules}` : "");
         if (!handles.length) {
           if (pending.length)
             return 0;
-          console.log(`No agents on this machine yet: no keys in ${join9(tiloriHome(), "agents")}. ` + "Run tilori-agent setup [<handle>] to create and connect one, or tilori-agent init --agent <handle> --url <tilori-mcp-url> for an existing key");
+          console.log(`No agents on this machine yet: no keys in ${join10(tiloriHome(), "agents")}. ` + "Run tilori-agent setup [<handle>] to create and connect one, or tilori-agent init --agent <handle> --url <tilori-mcp-url> for an existing key");
           return 0;
         }
         if (serverLine)
