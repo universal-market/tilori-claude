@@ -22,6 +22,12 @@
 # entry of URL characters only; the CLI checks it fully (HTTPS, or HTTP for
 # loopback). Never --replace: switching a home that's set up for another
 # deployment is for the terminal only, and connect says how.
+#
+# /universal-market:setup --refresh <handle> (UNI-939): asks the owner for a
+# new key for an agent already set up here (key refresh, UNI-937/938), for a
+# key made before a permission the agent now needs. The handle is checked as
+# above; `tilori-agent setup <handle> --refresh` prints the approval link,
+# waits for the approval and switches keys. It never prints a key.
 set -u
 case "$0" in
   /*) self=$0 ;;
@@ -39,7 +45,17 @@ usage() {
   echo "tilori: agent handles are 2-24 characters: a-z, 0-9 and single hyphens, starting and ending with a letter or digit." >&2
   echo "usage: /universal-market:setup [<handle>]" >&2
   echo "       /universal-market:setup --url <Tilori MCP address from the Connect panel>" >&2
+  echo "       /universal-market:setup --refresh <handle>" >&2
   exit 2
+}
+# Tilori's handle rule, in byte ranges whatever the user's locale (a-z must
+# not match capitals or accented letters); exits through usage otherwise.
+check_handle() {
+  LC_ALL=C
+  case "$1" in
+    '' | -* | *- | *--* | *[!a-z0-9-]*) usage ;;
+  esac
+  [ "${#1}" -ge 2 ] && [ "${#1}" -le 24 ] || usage
 }
 
 if [ "${1:-}" = --url ]; then
@@ -64,16 +80,15 @@ if [ "${1:-}" = --url ]; then
   exit $?
 fi
 
+if [ "${1:-}" = --refresh ]; then
+  [ $# -eq 2 ] || usage
+  check_handle "$2"
+  exec "$here/run-agent.sh" setup "$2" --refresh
+fi
+
 [ $# -le 1 ] || usage
 if [ $# -eq 0 ]; then
   exec "$here/run-agent.sh" setup
 fi
-h=$1
-# Byte ranges, whatever the user's locale (a-z must not match capitals or
-# accented letters).
-LC_ALL=C
-case "$h" in
-  '' | -* | *- | *--* | *[!a-z0-9-]*) usage ;;
-esac
-[ "${#h}" -ge 2 ] && [ "${#h}" -le 24 ] || usage
-exec "$here/run-agent.sh" setup "$h"
+check_handle "$1"
+exec "$here/run-agent.sh" setup "$1"

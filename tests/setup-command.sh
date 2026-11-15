@@ -35,6 +35,23 @@ done
 if run ab cd; then fail "two handles accepted"; fi
 [ ! -s "$t/out" ] || fail "two handles: the CLI ran"
 
+# --refresh (UNI-939): exactly one valid handle, passed as one argv entry.
+for h in ab my-agent keel; do
+  run --refresh "$h" || fail "--refresh '$h' refused: $(cat "$t/err")"
+  [ "$(cat "$t/out")" = "cwd=/
+[setup]
+[$h]
+[--refresh]" ] || fail "--refresh '$h': $(cat "$t/out")"
+done
+for h in a -ab 'a b' 'a;b' '$(id)' 'Ab' '' '--url' "ab'cd"; do
+  if run --refresh "$h"; then fail "--refresh '$h' accepted"; fi
+  [ ! -s "$t/out" ] || fail "--refresh '$h': the CLI ran: $(cat "$t/out")"
+  grep -q '^       /universal-market:setup --refresh <handle>$' "$t/err" || fail "--refresh '$h': no usage: $(cat "$t/err")"
+done
+if run --refresh; then fail "--refresh alone accepted"; fi
+if run --refresh ab cd; then fail "--refresh with two handles accepted"; fi
+[ ! -s "$t/out" ] || fail "--refresh with two handles: the CLI ran"
+
 
 # --url (UNI-818): the key from TILORI_API_KEY goes to `connect` on stdin
 # only, never argv, and the CLI's environment no longer has the variable.
@@ -81,7 +98,7 @@ grep -qx '\[setup\]' "$t/out" || fail "handle with a key: $(cat "$t/out")"
 # when the user typed it).
 cmd="$repo/plugins/universal-market/commands/setup.md"
 for line in \
-  'argument-hint: "[<handle>] | --url <address>"' \
+  'argument-hint: "[<handle>] | --url <address> | --refresh <handle>"' \
   'disable-model-invocation: true' \
   'sh "${CLAUDE_PLUGIN_ROOT}/scripts/setup.sh" --url' \
   'never add `--replace`' \
@@ -93,7 +110,9 @@ for line in \
   "never" \
   "ask the user to paste a key" \
   "only when your user typed" \
-  'run `/mcp` and reconnect'; do
+  'run `/mcp` and reconnect' \
+  'setup.sh" --refresh' \
+  'in the background'; do
   grep -qF -- "$line" "$cmd" || fail "commands/setup.md lacks: $line"
 done
 # The session-start note points at the command, not a terminal init.
