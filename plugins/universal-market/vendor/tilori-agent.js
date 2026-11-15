@@ -7275,7 +7275,7 @@ import { existsSync as existsSync2, readdirSync, readFileSync as readFileSync2 }
 import { dirname as dirname2, join as join3 } from "path";
 
 // src/version.ts
-var VERSION = "0.3.2";
+var VERSION = "0.3.3";
 
 // src/config.ts
 var DEFAULT_WAKES_PER_HOUR = 20;
@@ -21583,7 +21583,7 @@ function refreshPath(handle) {
 var REFRESH_LINES = {
   noKey: (handle) => `@${handle} has no key here to refresh. Run /universal-market:setup ${handle} to connect it first.`,
   unfinished: (handle) => `An earlier key refresh for @${handle} hasn't finished. It finishes when the next session with the Tilori plugin starts; start one, then try again.`,
-  link: (handle) => `Open this link to approve a new key for @${handle}:`,
+  link: (handle, host) => `Open this link on ${host} to approve a new key for @${handle}:`,
   wait: "Waiting for your approval in the browser. Once you approve, the agent switches to the new key and revokes the old one.",
   done: (handle) => `@${handle} now uses its new key, and the old key is revoked.`,
   doneLater: (handle) => `@${handle} now uses its new key. The old key will be revoked when the next session with the Tilori plugin starts.`,
@@ -21646,7 +21646,9 @@ function readRefresh(handle) {
   } catch {
     throw bad();
   }
-  if (!allowedUrl(origin, origin) || Object.values(urls).some((u) => u.origin !== origin.origin || !allowedUrl(u, origin)))
+  if (!allowedUrl(origin, origin) || !allowedUrl(urls.claim_url, origin))
+    throw bad();
+  if ([urls.status_url, urls.complete_url].some((u) => u.origin !== origin.origin || !allowedUrl(u, origin)))
     throw bad();
   const poll = j.poll_after_seconds;
   return {
@@ -21687,20 +21689,23 @@ async function startRefresh(o) {
   const key = j?.api_key;
   if (typeof key !== "string" || !key.trim() || /\s/.test(key.trim()) || key.length > 200)
     throw unusable("no usable api_key");
-  const on = (raw, fallback) => {
-    let u;
+  const parse = (raw, fallback) => {
     try {
-      u = new URL(typeof raw === "string" ? raw : fallback ?? "", o.origin);
+      return new URL(typeof raw === "string" ? raw : fallback ?? "", o.origin);
     } catch {
       return null;
     }
-    return u.origin === o.origin.origin && allowedUrl(u, o.origin) ? u : null;
   };
-  const claim = typeof j?.claim_url === "string" ? on(j.claim_url) : null;
+  const on = (raw, fallback) => {
+    const u = parse(raw, fallback);
+    return u && u.origin === o.origin.origin && allowedUrl(u, o.origin) ? u : null;
+  };
+  const shown = typeof j?.claim_url === "string" ? parse(j.claim_url) : null;
+  const claim = shown && allowedUrl(shown, o.origin) ? shown : null;
   const status = on(j?.status_url, "/api/v1/agents/status");
   const complete = on(j?.complete_url, COMPLETE_PATH);
   if (!claim)
-    throw unusable("the approval link is not on the Tilori origin");
+    throw unusable("the approval link is not https");
   if (!status || !complete)
     throw unusable("its URLs are not on the Tilori origin");
   const id = typeof j?.id === "string" && j.id.trim() && j.id.length <= 64 ? j.id : null;
@@ -21762,7 +21767,7 @@ async function runRefresh(o) {
     writeRefresh(p);
   }
   secrets.push(p.api_key);
-  o.out(REFRESH_LINES.link(handle));
+  o.out(REFRESH_LINES.link(handle, new URL(p.claim_url).host));
   o.out(p.claim_url);
   if (!o.noBrowser)
     openBrowser(p.claim_url, log, o.platform);
