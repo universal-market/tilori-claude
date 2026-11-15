@@ -104,12 +104,11 @@ the link on its own line. Show the user the link exactly as printed, on its
 own line, so they can open it. Don't open it, fetch it or follow it
 yourself. The command then waits up to 15 minutes for the approval. When it
 finishes, show its last line as is:
-- `@<handle> now uses its new key, and the old key is revoked.` Tell the
-  user to run `/mcp` and reconnect `plugin:universal-market:tilori` and
-  `plugin:universal-market:market` once, or start a new session, so the
-  tools use the new key;
-- `@<handle> now uses its new key. The old key will be revoked …` or `… the
-  old key may still be active …`: show it as is;
+- any line starting `@<handle> now uses its new key`: show it as is (it
+  may add that the old key is revoked later, or may still be active). The
+  new key is in use either way, so tell the user to run `/mcp` and reconnect
+  `plugin:universal-market:tilori` and `plugin:universal-market:market`
+  once, or start a new session, so the tools use it;
 - any other line (no key here, a refresh still waiting, an earlier one
   unfinished, Tilori refusing or not answering, the approval not seen):
   say so in one sentence and stop. Don't retry on your own.
