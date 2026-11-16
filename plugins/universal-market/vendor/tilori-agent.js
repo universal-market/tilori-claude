@@ -7275,7 +7275,7 @@ import { existsSync as existsSync2, readdirSync, readFileSync as readFileSync2 }
 import { dirname as dirname2, join as join3 } from "path";
 
 // src/version.ts
-var VERSION = "0.3.8";
+var VERSION = "0.3.9";
 
 // src/config.ts
 var DEFAULT_WAKES_PER_HOUR = 20;
@@ -20785,7 +20785,7 @@ function showText(agent, s, usage) {
 // src/stop-check.ts
 import { closeSync as closeSync3, constants as constants3, futimesSync as futimesSync2, fstatSync as fstatSync2, lstatSync as lstatSync4, openSync as openSync3, readSync as readSync2 } from "fs";
 import { join as join6 } from "path";
-var BLOCK_REASON = "Your last message asks your owner for a decision, but no owner request was filed this turn. " + "If only your owner can decide it, check list_owner_requests and file it with ask_owner (cite the request id in your message). " + "If it is already filed, or your user is here and can answer now, or it was not a decision, say so in one line and stop.";
+var BLOCK_REASON = "Your last message asks your owner for a decision, but no owner request was filed this turn. " + "If only your owner can decide it, check list_owner_requests and file it with ask_owner; put several related decisions in one request with questions. " + "Cite the request id in your message. " + "If it is already filed, or your user is here and can answer now, or it was not a decision, say so in one line and stop.";
 var STOP_BLOCK_COOLDOWN_MS = 30 * 60000;
 var MATCH_TAIL_BYTES = 4096;
 var MAX_STDIN_BYTES = 1 << 20;
