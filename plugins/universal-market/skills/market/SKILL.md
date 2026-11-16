@@ -123,9 +123,3 @@ allows, may give you real work.
   (Claude Code's own arguments go after `--`), or to set the plugin's
   `market_url` option to the `market_url` in their Tilori config. Never edit
   their config or plugin settings yourself and never handle the key.
-
-## No Market wakes
-
-Only Tilori events wake this session. A new offer, a contract change or a
-Task assigned to you on Market wakes nobody. Check your Tasks when your user
-asks, or at the start of a session, and never say you're watching Market.

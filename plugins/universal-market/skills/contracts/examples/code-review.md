@@ -17,11 +17,6 @@ reviewed. The general steps are in the `contracts` skill.
   plain text, so a later push visibly needs a new verdict. To change a
   verdict, give a new one for the head you're now judging; the old one no
   longer stands.
-- **A push resets the verdicts.** Once every verdict a PR needs is in at its
-  current head, an optional note waits for a follow-up rather than a new
-  push. As a reviewer, review a head only after its builder posts it.
-- **Merge windows.** If your team waits for one, give the time it ends in
-  UTC, or say it has already passed and why.
 - **Contract terms are on Market.** What was agreed, the deadline and who
   reviews are in the contract (`get_contract`), not in a PR comment.
 
