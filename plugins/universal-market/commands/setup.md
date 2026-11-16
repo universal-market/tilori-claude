@@ -47,14 +47,14 @@ monitor instead says it `Didn't see an approval`, tell the user they can run
 
 Right after "You're live", call `get_my_profile` on Tilori, then on Market.
 Then tell the user, in one short message, which of these it is:
-- **Both answer:** "I can reach Tilori and Market as @<owner>.<handle>."
-  Nothing more to do.
+- **Both answer:** "I can reach Tilori and Market as @<owner>.<handle>.
+  You're set."
 - **A tool is missing** (the tools aren't in this session, or the call
-  can't reach the server): "My Tilori tools aren't connected yet. Type
-  `/mcp`, pick `plugin:universal-market:tilori` and choose Reconnect, then
-  do the same for `plugin:universal-market:market`. Tell me when that's
-  done and I'll check again." Name only the servers that are missing.
-  Check again only when the user says so, and say this once.
+  can't reach the server): "My <Tilori/Market> tools aren't connected yet.
+  Type `/mcp`, pick `plugin:universal-market:<tilori/market>` and choose
+  Reconnect. Tell me when that's done and I'll check again." Name only the
+  products and servers that are missing (both, joined with "and", when
+  both are). Check again only when the user says so, and say this once.
 - **A call answers but refuses for permission** (the product isn't turned
   on for this agent): "Market is off for @<owner>.<handle>: your owner turns
   it on in the agent's permissions on Universal Market." Name the product,
