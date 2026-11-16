@@ -43,6 +43,13 @@ argv() { tr '\n' ' ' <"$log" | sed 's/ $//'; }
 [ "$(run post_wake_minutes=0)" = 0 ] || fail "post_wake_minutes 0"
 [ "$(argv)" = "cwd=/ config set post_wake_minutes=0" ] || fail "post_wake_minutes argv: $(argv)"
 [ "$(run post_wake_minutes=60)" = 0 ] || fail "post_wake_minutes 60"
+# owner_decision_check takes on or off only (UNI-957).
+for v in on off; do
+  [ "$(run owner_decision_check=$v)" = 0 ] || fail "owner_decision_check=$v"
+  [ "$(argv)" = "cwd=/ config set owner_decision_check=$v" ] || fail "owner_decision_check=$v argv: $(argv)"
+done
+[ "$(run reset owner_decision_check)" = 0 ] || fail "reset owner_decision_check"
+[ "$(argv)" = "cwd=/ config reset owner_decision_check" ] || fail "reset owner_decision_check argv: $(argv)"
 
 # Reset.
 [ "$(run reset wakes_per_hour stall_minutes)" = 0 ] || fail "reset"
@@ -54,7 +61,8 @@ for bad in \
   "wakes_per_hour=0" "wakes_per_hour=61" "direct_wakes_per_hour=31" "stall_minutes=1441" "post_wake_minutes=61" \
   "reminder.every_minutes=14" "reminder.every_minutes=1441" "wakes_per_hour=999999" \
   "wakes_per_hour=-1" "wakes_per_hour=3.5" "wakes_per_hour=1e2" "wakes_per_hour=" "wakes_per_hour" \
-  "wakes_per_hour=35;id" 'wakes_per_hour=$(id)' "wakes_per_hour=35 x" "--agent" "--agent=pax" "set" "show extra"; do
+  "wakes_per_hour=35;id" 'wakes_per_hour=$(id)' "wakes_per_hour=35 x" "--agent" "--agent=pax" "set" "show extra" \
+  "owner_decision_check=1" "owner_decision_check=yes" "owner_decision_check=" "owner_decision_check" "wakes_per_hour=on"; do
   [ "$(run "$bad")" = 2 ] || fail "accepted: $bad"
   [ ! -e "$log" ] || fail "ran the CLI for: $bad"
 done
@@ -71,6 +79,7 @@ reason() { (cd "$p" && env -i HOME="$t" PATH=".:/usr/bin:/bin" TILORI_AGENT_BIN=
 [ "$(reason wakes_per_hour=999999)" = "tilori: wakes_per_hour=999999 is out of range (1-60)" ] || fail "long reason"
 [ "$(reason stall_minutes=x)" = "tilori: stall_minutes needs a whole number (0-1440)" ] || fail "number reason: $(reason stall_minutes=x)"
 [ "$(reason foo=1)" = "tilori: unknown key foo" ] || fail "key reason: $(reason foo=1)"
+[ "$(reason owner_decision_check=1)" = "tilori: owner_decision_check takes on or off" ] || fail "flag reason: $(reason owner_decision_check=1)"
 [ "$(reason reset foo)" = "tilori: unknown key foo" ] || fail "reset key reason"
 [ "$(reason reset reminder.every_minutes)" = "tilori: reminder.every_minutes has no reset; turn the reminder off by hand" ] || fail "reminder reason"
 [ "$(reason --agent)" = "tilori: expected key=<number>" ] || fail "shape reason: $(reason --agent)"

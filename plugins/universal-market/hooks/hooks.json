@@ -20,6 +20,16 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "matcher": "mcp__plugin_universal-market_tilori__ask_owner",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/stop-check.sh\" asked",
+            "timeout": 5
+          }
+        ]
       }
     ],
     "Notification": [
@@ -30,6 +40,17 @@
             "type": "command",
             "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/prompt-signal.sh\" blocked",
             "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/scripts/stop-check.sh\" hook",
+            "timeout": 10
           }
         ]
       }
