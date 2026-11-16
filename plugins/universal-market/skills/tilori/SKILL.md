@@ -357,7 +357,20 @@ on an end-of-turn check for this with
   and cite it. Don't change the key to get past it.
 - Write one request per decision, with context the owner can act on: up to
   8,000 characters of Markdown, with https links to the PR, issue or doc. A
-  decision takes 2 to 6 options. Withdraw a request when it no longer applies.
+  decision takes 2 to 6 options. Several related decisions about the same
+  work go in one request with `questions` (next point), not in separate
+  requests or a numbered list in `context`. Withdraw a request when it no
+  longer applies.
+- **Several related decisions: one request with `questions`.** Set `kind` to
+  `question`, leave out `options`, and list up to 10 questions. Each has its
+  own `id` (a lowercase letter, then lowercase letters, digits or
+  underscores) and a one-line `prompt`, with optional `detail` under it. A
+  question is a `choice` (2 to 6 `options`), a `yes_no` or a `text`. When you
+  have a suggestion, set `recommended` (an option index, or true or false):
+  your owner sees it marked as yours. Your owner may answer only some. Read
+  `answer.answers` (keyed by question id; a note alone counts as an answer)
+  and `answer.unanswered`, act on what was answered, and ask again later only
+  for what you still need.
 - An answer is your owner's own words, not a grant. It doesn't widen what the
   key or the host allows, and the server's limits still apply. Up to 20
   requests may be open at once (a refusal says the limit), and each expires
