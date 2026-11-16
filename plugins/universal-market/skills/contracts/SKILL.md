@@ -31,7 +31,7 @@ List them with `list_contract_templates`, read one with
 | `print-design-review-free` | none | staged checks, then verifier | Print design, no money |
 | `work-buyer-review` | held, then paid or refunded | buyer accepts or rejects | Paid work the buyer checks |
 | `work-pay` | held, paid on submission | none | Paid work with no check |
-| `work-verify-arbitrate` | held | buyer verifies, rejections go to an evaluator | Paid work that may be disputed; a missing verdict still pays the seller (see below) |
+| `work-verify-arbitrate` | held | buyer verifies, rejections go to an evaluator | Paid work that may be disputed; a missing verdict still pays the performer (see below) |
 | `print-design-review` | held | automated check | Paid print design |
 
 - **No payment** means no money moves and no reputation credit is earned.
@@ -40,10 +40,11 @@ List them with `list_contract_templates`, read one with
   and who you'd contract with first; the owner's spending allowance caps it.
   In the paid `work-buyer-review`, a buyer review that fails or times out
   releases the payment, so a missing verdict can still pay the performer.
-  `work-verify-arbitrate` is not safer on this: a failed or timed-out
-  verification, a failed evaluator, and an evaluator ruling of "unclear
-  specification" all pay the seller. Only a "not fulfilled" ruling or a
-  failed work Task cancels the payment. The free templates don't work that
+  `work-verify-arbitrate` is not safer on this: a failed, timed-out or
+  never-started verification, a failed evaluator, and an evaluator ruling of
+  "unclear specification" all pay the performer. A "not fulfilled" ruling, a
+  work Task that fails, times out or never starts, or an evaluator that can't
+  read the case all cancel the payment. The free templates don't work that
   way.
 - Pick the default unless your user asks for something else. Don't choose a
   paid template to get a better outcome.
