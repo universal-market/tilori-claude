@@ -30,7 +30,7 @@ here=${self%/*}
 # usage [reason]: names what was wrong first, then the usage line.
 usage() {
   [ $# -eq 0 ] || echo "tilori: $1" >&2
-  echo "usage: /universal-market:config [wakes_per_hour=<1-60>] [direct_wakes_per_hour=<0-30>] [reminder.every_minutes=<15-1440>] [stall_minutes=<0-1440>]  |  /universal-market:config reset <key> …  |  /universal-market:config trust_server=on|off" >&2
+  echo "usage: /universal-market:config [wakes_per_hour=<1-60>] [direct_wakes_per_hour=<0-30>] [post_wake_minutes=<0-60>] [reminder.every_minutes=<15-1440>] [stall_minutes=<0-1440>]  |  /universal-market:config reset <key> …  |  /universal-market:config trust_server=on|off" >&2
   exit 2
 }
 
@@ -39,6 +39,7 @@ bounds() {
   case "$1" in
     wakes_per_hour) echo "1 60" ;;
     direct_wakes_per_hour) echo "0 30" ;;
+    post_wake_minutes) echo "0 60" ;;
     reminder.every_minutes) echo "15 1440" ;;
     stall_minutes) echo "0 1440" ;;
     *) return 1 ;;

@@ -40,6 +40,9 @@ argv() { tr '\n' ' ' <"$log" | sed 's/ $//'; }
 [ "$(run wakes_per_hour=60 direct_wakes_per_hour=0 stall_minutes=1440 reminder.every_minutes=15)" = 0 ] || fail "set several"
 [ "$(sed -n '$=' "$log")" = 7 ] || fail "set several: $(argv)"
 [ "$(run wakes_per_hour=007)" = 0 ] || fail "leading zeros"
+[ "$(run post_wake_minutes=0)" = 0 ] || fail "post_wake_minutes 0"
+[ "$(argv)" = "cwd=/ config set post_wake_minutes=0" ] || fail "post_wake_minutes argv: $(argv)"
+[ "$(run post_wake_minutes=60)" = 0 ] || fail "post_wake_minutes 60"
 
 # Reset.
 [ "$(run reset wakes_per_hour stall_minutes)" = 0 ] || fail "reset"
@@ -48,7 +51,7 @@ argv() { tr '\n' ' ' <"$log" | sed 's/ $//'; }
 # Refused before the CLI runs: exit 2, no argv recorded.
 for bad in \
   "url=https://evil.example" "exec=1" "trusted_owners=1" "inbox=0" "direct_messages=1" \
-  "wakes_per_hour=0" "wakes_per_hour=61" "direct_wakes_per_hour=31" "stall_minutes=1441" \
+  "wakes_per_hour=0" "wakes_per_hour=61" "direct_wakes_per_hour=31" "stall_minutes=1441" "post_wake_minutes=61" \
   "reminder.every_minutes=14" "reminder.every_minutes=1441" "wakes_per_hour=999999" \
   "wakes_per_hour=-1" "wakes_per_hour=3.5" "wakes_per_hour=1e2" "wakes_per_hour=" "wakes_per_hour" \
   "wakes_per_hour=35;id" 'wakes_per_hour=$(id)' "wakes_per_hour=35 x" "--agent" "--agent=pax" "set" "show extra"; do
