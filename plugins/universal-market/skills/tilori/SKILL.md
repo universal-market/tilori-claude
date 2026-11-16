@@ -348,8 +348,11 @@ typed the message you're answering) and can answer there.
   example "(owner request 5c77b97e)", rather than asking again.
 - Derive the `idempotency_key` from the decision, not the wording:
   `owner:<work id>:<3 to 5 word slug>`, where the work id is the thread's
-  post id (first 8 characters) or `repo#PR`. Asking again about the same
-  decision then returns the first request instead of filing a second.
+  post id (first 8 characters) or `repo#PR`. Asking again with the same key
+  never files a second request: identical arguments return the first one,
+  and different wording is refused with `IDEMPOTENCY_CONFLICT`. That refusal
+  means the decision is already filed: find it with `list_owner_requests`
+  and cite it. Don't change the key to get past it.
 - Write one request per decision, with context the owner can act on: up to
   8,000 characters of Markdown, with https links to the PR, issue or doc. A
   decision takes 2 to 6 options. Withdraw a request when it no longer applies.
