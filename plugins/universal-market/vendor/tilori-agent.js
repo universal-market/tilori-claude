@@ -7086,7 +7086,7 @@ function checkRules(env) {
 // src/cli.ts
 import { spawn as spawn4 } from "child_process";
 import { existsSync as existsSync7, readdirSync as readdirSync4, statSync as statSync3 } from "fs";
-import { isAbsolute as isAbsolute3, join as join10 } from "path";
+import { isAbsolute as isAbsolute3, join as join11 } from "path";
 
 // src/activity.ts
 import { closeSync as closeSync2, constants as constants2, futimesSync, lstatSync as lstatSync3, openSync as openSync2, readFileSync as readFileSync3, writeSync } from "fs";
@@ -7275,7 +7275,7 @@ import { existsSync as existsSync2, readdirSync, readFileSync as readFileSync2 }
 import { dirname as dirname2, join as join3 } from "path";
 
 // src/version.ts
-var VERSION = "0.3.7";
+var VERSION = "0.3.8";
 
 // src/config.ts
 var DEFAULT_WAKES_PER_HOUR = 20;
@@ -7296,6 +7296,13 @@ function postWakeMinutes(value) {
     return DEFAULT_POST_WAKE_MINUTES;
   if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > MAX_POST_WAKE_MINUTES)
     throw new Error(`post_wake_minutes must be a whole number from 0 to ${MAX_POST_WAKE_MINUTES}.`);
+  return value;
+}
+function ownerDecisionCheck(value) {
+  if (value === undefined)
+    return false;
+  if (typeof value !== "boolean")
+    throw new Error("owner_decision_check must be true or false.");
   return value;
 }
 var MIN_REMINDER_MINUTES = 15;
@@ -8335,6 +8342,15 @@ function writePushSignal(dir, handle, s) {
   const fd = openSync2(path, constants2.O_WRONLY | constants2.O_CREAT | constants2.O_TRUNC | (constants2.O_NOFOLLOW ?? 0), 384);
   try {
     writeSync(fd, JSON.stringify({ state: s.state, since: s.since, ...s.next !== undefined ? { next: s.next } : {} }));
+  } finally {
+    closeSync2(fd);
+  }
+}
+function writeCapsSignal(dir, handle, askOwner) {
+  const path = join5(dir, `caps-${validateHandle(handle)}`);
+  const fd = openSync2(path, constants2.O_WRONLY | constants2.O_CREAT | constants2.O_TRUNC | (constants2.O_NOFOLLOW ?? 0), 384);
+  try {
+    writeSync(fd, JSON.stringify({ ask_owner: askOwner }));
   } finally {
     closeSync2(fd);
   }
@@ -18759,11 +18775,12 @@ class TiloriAgentClient {
     const res = await this.call("get_my_profile", {}, { signal, timeout: 5000 });
     const hash = res?.tools_hash;
     const toolsHash = typeof hash === "string" && TOOLS_HASH.test(hash) ? hash : null;
+    const askOwner = Array.isArray(res?.tools) ? res.tools.includes("ask_owner") : null;
     const remaining = res?.posts_remaining_today;
     if (!Number.isInteger(remaining) || remaining < 0)
-      return { postsLeft: null, toolsHash };
+      return { postsLeft: null, toolsHash, askOwner };
     const at = typeof res.resets_at === "string" ? Date.parse(res.resets_at) : NaN;
-    return { postsLeft: { remaining, resetsAt: Number.isFinite(at) ? at : null }, toolsHash };
+    return { postsLeft: { remaining, resetsAt: Number.isFinite(at) ? at : null }, toolsHash, askOwner };
   }
   async listSubscriptions(signal) {
     const res = await this.call("list_agent_subscriptions", {}, { signal });
@@ -19490,7 +19507,7 @@ class Router {
         heldNotice: "",
         reminderAt: cfg.reminder ? Date.now() + cfg.reminder.everyMs : 0,
         stats: { wakes: 0, events: 0, delayed: 0, reminders: 0 },
-        profile: { at: -Infinity, value: { postsLeft: null, toolsHash: null } },
+        profile: { at: -Infinity, value: { postsLeft: null, toolsHash: null, askOwner: null } },
         blocked: { since: 0, wakes: 0, logged: false }
       };
       this.#agents.set(cfg.handle, st);
@@ -19551,6 +19568,43 @@ class Router {
       },
       log: (m) => this.#log(`[${handle}] ${m}`)
     });
+  }
+  async#readProfile(st, signal) {
+    if (st.profile.reading)
+      return st.profile.reading;
+    const now = this.#now();
+    if (now - st.profile.at < POSTS_LEFT_MS)
+      return;
+    st.profile.at = now;
+    const read = (async () => {
+      try {
+        st.profile.value = await st.cfg.client.profileNotes(signal);
+      } catch {
+        st.profile.value = { postsLeft: null, toolsHash: null, askOwner: null };
+      }
+      if (st.profile.value.askOwner !== null)
+        this.#capsStatus(st.cfg.handle, st.profile.value.askOwner);
+    })();
+    st.profile.reading = read;
+    try {
+      await read;
+    } finally {
+      st.profile.reading = undefined;
+    }
+  }
+  #capsStatus(handle, askOwner) {
+    if (this.#signalDir === undefined)
+      return;
+    try {
+      writeCapsSignal(this.#signalDir, handle, askOwner);
+      this.#signalFailed.delete(`caps-${handle}`);
+    } catch (cause) {
+      const key = `caps-${handle}`;
+      if (this.#signalFailed.has(key))
+        return;
+      this.#signalFailed.add(key);
+      this.#log(`[${handle}] could not update caps- in the run directory: ${errText(cause)}`);
+    }
   }
   #pushStatus(handle, s) {
     if (this.#signalDir === undefined)
@@ -19787,6 +19841,7 @@ class Router {
   }
   async#runAgent(st, signal) {
     const pending = new Map;
+    this.#readProfile(st, signal);
     await Promise.all([
       this.#flushLoop(st, pending, signal),
       ...this.#laneList(st).map((lane) => this.#runLane(st, lane, pending, signal))
@@ -20266,15 +20321,7 @@ class Router {
       wake.wakes_resume_at = this.#now() + Math.min(general, direct);
   }
   async#noteProfile(st, wake, signal) {
-    const now = this.#now();
-    if (now - st.profile.at >= POSTS_LEFT_MS) {
-      st.profile.at = now;
-      try {
-        st.profile.value = await st.cfg.client.profileNotes(signal);
-      } catch {
-        st.profile.value = { postsLeft: null, toolsHash: null };
-      }
-    }
+    await this.#readProfile(st, signal);
     const { postsLeft: left, toolsHash } = st.profile.value;
     if (toolsHash)
       wake.tools_hash = toolsHash;
@@ -20551,8 +20598,21 @@ var SETTABLE = [
     note: "minutes blocked on a prompt before the router logs it; 0 = off",
     get: (s) => s.stall_minutes,
     put: (s, v) => v === undefined ? delete s.stall_minutes : s.stall_minutes = v
+  },
+  {
+    key: "owner_decision_check",
+    min: 0,
+    max: 1,
+    fallback: 0,
+    flag: true,
+    note: "at the end of a turn, ask for ask_owner when a decision was left only in the session",
+    get: (s) => s.owner_decision_check === undefined ? undefined : s.owner_decision_check ? 1 : 0,
+    put: (s, v) => v === undefined ? delete s.owner_decision_check : s.owner_decision_check = v === 1
   }
 ];
+function shownValue(k, v) {
+  return k.flag ? v ? "on" : "off" : String(v);
+}
 function settable(key) {
   const k = SETTABLE.find((x) => x.key === key);
   if (!k)
@@ -20560,11 +20620,14 @@ function settable(key) {
   return k;
 }
 function parseAssignment(arg) {
-  const m = /^([a-z_.]{1,40})=(\d{1,5})$/.exec(arg);
+  const m = /^([a-z_.]{1,40})=(\d{1,5}|on|off)$/.exec(arg);
   if (!m)
     throw new Error(`Expected key=<whole number>, got: ${arg.slice(0, 60)}`);
   const key = settable(m[1]);
-  const value = Number(m[2]);
+  const word = m[2] === "on" || m[2] === "off";
+  if (!!key.flag !== word)
+    throw new Error(key.flag ? `${key.key} takes on or off.` : `${key.key} takes a whole number.`);
+  const value = word ? Number(m[2] === "on") : Number(m[2]);
   if (value < key.min || value > key.max)
     throw new Error(`${key.key} must be from ${key.min} to ${key.max}.`);
   return { key, value };
@@ -20587,6 +20650,7 @@ function applyChanges(agent, edits, path = configPath()) {
     changes.push({ key: key.key, from, to: value });
   }
   liveSettings(s);
+  ownerDecisionCheck(s.owner_decision_check);
   saveConfig(config, path);
   return changes;
 }
@@ -20703,8 +20767,9 @@ function showText(agent, s, usage) {
   const lines = [`${agent}:`];
   for (const k of SETTABLE) {
     const v = k.get(s);
-    const value = v !== undefined ? String(v) : k.fallback === null ? "off" : `${k.fallback} (default)`;
-    lines.push(`  ${k.key} = ${value}    [${k.min}-${k.max}] ${k.note}`);
+    const value = v !== undefined ? shownValue(k, v) : k.fallback === null ? "off" : `${shownValue(k, k.fallback)} (default)`;
+    const range = k.flag ? "on|off" : `${k.min}-${k.max}`;
+    lines.push(`  ${k.key} = ${value}    [${range}] ${k.note}`);
   }
   if (!usage)
     lines.push("  this hour: not reported (no router running)");
@@ -20717,8 +20782,173 @@ function showText(agent, s, usage) {
 `);
 }
 
+// src/stop-check.ts
+import { closeSync as closeSync3, constants as constants3, futimesSync as futimesSync2, fstatSync as fstatSync2, lstatSync as lstatSync4, openSync as openSync3, readSync as readSync2 } from "fs";
+import { join as join6 } from "path";
+var BLOCK_REASON = "Your last message asks your owner for a decision, but no owner request was filed this turn. " + "If only your owner can decide it, check list_owner_requests and file it with ask_owner (cite the request id in your message). " + "If it is already filed, or your user is here and can answer now, or it was not a decision, say so in one line and stop.";
+var STOP_BLOCK_COOLDOWN_MS = 30 * 60000;
+var MATCH_TAIL_BYTES = 4096;
+var MAX_STDIN_BYTES = 1 << 20;
+var MAX_CAPS_BYTES = 64;
+function strip(text) {
+  return text.replace(/```[\s\S]*?```/g, " ").replace(/`[^`\n]*`/g, " ").replace(/^>.*$/gm, " ");
+}
+function sentences(text) {
+  return text.split(/(?<=[.?!])\s+|\n+/).map((s) => s.trim()).filter(Boolean);
+}
+var ASKS = [
+  /^\W*(?:\*\*)?(?:your (?:calls?|decisions?)|decisions? for you|needs? your (?:decision|answer|ok|okay|approval)|questions? for you)\b[^.]{0,20}:/i,
+  /\b(?:(?:is|are|it'?s|stays?|still|be) your (?:call|decision)s?\b|needs? your (?:decision|approval|ok|okay|answer|answers|go-ahead|sign-?off|yes|call)|(?:waiting|blocked) (?:on|for) (?:you\b|your (?:decision|answer|approval|ok|okay|yes|go-ahead))|say (?:go|yes|if you want)|once you (?:decide|confirm|approve|answer|say)|until (?:you (?:decide|confirm|approve|answer)|your (?:decision|answer|approval|ok|okay|go-ahead)))/i,
+  /\b(?:please (?:confirm|decide|approve|choose|pick|advise)|let me know (?:which|whether|if you(?:'d| would)? (?:like|want|prefer)|how you(?:'d| would)? like))\b/i,
+  /\b(?:do you want|would you (?:like|prefer|rather)|should (?:I|we)|shall I|want me to|which (?:option|one|do you)|ok(?:ay)? to (?:proceed|merge|ship|push|go|delete|remove)|may I|can I (?:go ahead|proceed|merge)|do you (?:approve|prefer|agree))\b[^?]{0,200}\?/i
+];
+var NOT_ASKING = /\b(?:nothing (?:new |else )?(?:needs|is waiting on|waits on|is blocked on) you|(?:doesn'?t|does not|don'?t|no longer|not) (?:need|needs|wait|waiting|blocked)[^.]{0,30}\byou|no decision (?:is )?needed|passed your decision|your decision (?:was|is in|came)|you (?:said|decided|approved|answered|confirmed))\b/i;
+var FILED = /\b(?:ask_owner|owner request|inbox|filed|request (?:is )?open)\b/i;
+function asksOwner(message) {
+  const text = strip(Buffer.from(message, "utf8").subarray(-MAX_STDIN_BYTES).toString("utf8"));
+  const all = sentences(Buffer.from(text, "utf8").subarray(-MATCH_TAIL_BYTES).toString("utf8"));
+  const open = (s) => !NOT_ASKING.test(s) && !FILED.test(s);
+  if (all.some((s) => open(s) && ASKS.some((r) => r.test(s))))
+    return true;
+  const last = all.at(-1);
+  return last !== undefined && last.endsWith("?") && open(last);
+}
+function mtime2(path) {
+  try {
+    const st = lstatSync4(path);
+    if (!st.isFile())
+      return null;
+    if (typeof process.getuid === "function" && st.uid !== process.getuid())
+      return null;
+    return st.mtimeMs;
+  } catch {
+    return null;
+  }
+}
+function touch(path, at) {
+  const fd = openSync3(path, constants3.O_WRONLY | constants3.O_CREAT | (constants3.O_NOFOLLOW ?? 0), 384);
+  try {
+    const t = new Date(at);
+    futimesSync2(fd, t, t);
+  } finally {
+    closeSync3(fd);
+  }
+}
+function readOwnFile(path, max, tail = false) {
+  let fd;
+  try {
+    fd = openSync3(path, constants3.O_RDONLY | (constants3.O_NOFOLLOW ?? 0) | (constants3.O_NONBLOCK ?? 0));
+  } catch {
+    return null;
+  }
+  try {
+    const st = fstatSync2(fd);
+    if (!st.isFile())
+      return null;
+    if (typeof process.getuid === "function" && st.uid !== process.getuid())
+      return null;
+    if (!tail && st.size > max)
+      return null;
+    const start = tail ? Math.max(0, st.size - max) : 0;
+    const buf = Buffer.alloc(Math.min(max, st.size));
+    const n = readSync2(fd, buf, 0, buf.length, start);
+    return buf.subarray(0, n).toString("utf8");
+  } catch {
+    return null;
+  } finally {
+    closeSync3(fd);
+  }
+}
+function readCanAsk(dir, handle) {
+  if (!HANDLE_RE.test(handle))
+    return false;
+  const raw = readOwnFile(join6(dir, `caps-${handle}`), MAX_CAPS_BYTES);
+  if (raw === null)
+    return false;
+  try {
+    const v = JSON.parse(raw);
+    return v !== null && typeof v === "object" && !Array.isArray(v) && Object.keys(v).length === 1 && v.ask_owner === true;
+  } catch {
+    return false;
+  }
+}
+function lastAssistantText(transcriptPath) {
+  const raw = readOwnFile(transcriptPath, 64 * 1024, true);
+  if (raw === null)
+    return null;
+  const lines = raw.split(`
+`);
+  for (let i = lines.length - 1;i >= 0; i--) {
+    let row;
+    try {
+      row = JSON.parse(lines[i]);
+    } catch {
+      continue;
+    }
+    if (row?.type !== "assistant" || !Array.isArray(row?.message?.content))
+      continue;
+    const text = row.message.content.filter((c) => c?.type === "text" && typeof c.text === "string").map((c) => c.text).join(`
+`);
+    if (text)
+      return text;
+  }
+  return null;
+}
+function stopCheck(input, env) {
+  if (!env.enabled || input.stop_hook_active === true)
+    return null;
+  if (!HANDLE_RE.test(env.handle))
+    return null;
+  if (!readCanAsk(env.dir, env.handle))
+    return null;
+  const at = (name) => join6(env.dir, `${name}-${env.handle}`);
+  const lastCheck = mtime2(at("stopcheck"));
+  const asked = mtime2(at("asked"));
+  touch(at("stopcheck"), env.now);
+  if (asked !== null && (lastCheck === null || asked >= lastCheck))
+    return null;
+  const blocked = mtime2(at("stopblock"));
+  if (blocked !== null && env.now - blocked < STOP_BLOCK_COOLDOWN_MS)
+    return null;
+  const message = typeof input.last_assistant_message === "string" ? input.last_assistant_message : typeof input.transcript_path === "string" ? lastAssistantText(input.transcript_path) : null;
+  if (!message || !asksOwner(message))
+    return null;
+  touch(at("stopblock"), env.now);
+  return JSON.stringify({ decision: "block", reason: BLOCK_REASON });
+}
+var ASK_OWNER_TOOL = /^mcp__[A-Za-z0-9_-]{1,128}__ask_owner$/;
+function noteAsked(input, handle, dir, now) {
+  if (!HANDLE_RE.test(handle))
+    return false;
+  if (typeof input.tool_name !== "string" || !ASK_OWNER_TOOL.test(input.tool_name))
+    return false;
+  const r = input.tool_response;
+  if (r === null || typeof r !== "object")
+    return false;
+  if (!Array.isArray(r) && r.isError === true)
+    return false;
+  touch(join6(dir, `asked-${handle}`), now);
+  return true;
+}
+async function readHookInput(stream = process.stdin) {
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of stream) {
+    size += chunk.length;
+    if (size > MAX_STDIN_BYTES)
+      return null;
+    chunks.push(chunk);
+  }
+  try {
+    const v = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    return v !== null && typeof v === "object" && !Array.isArray(v) ? v : null;
+  } catch {
+    return null;
+  }
+}
+
 // src/update-notice.ts
-import { closeSync as closeSync3, constants as constants3, fstatSync as fstatSync2, openSync as openSync3, readSync as readSync2 } from "fs";
+import { closeSync as closeSync4, constants as constants4, fstatSync as fstatSync3, openSync as openSync4, readSync as readSync3 } from "fs";
 var VERSION2 = /^\d{1,6}\.\d{1,6}\.\d{1,6}$/;
 var MAX_MANIFEST_BYTES = 1e6;
 var RECHECK_MS = 60000;
@@ -20752,19 +20982,19 @@ function installedVersion(text, key) {
 function readBounded(path) {
   let fd;
   try {
-    fd = openSync3(path, constants3.O_RDONLY | constants3.O_NONBLOCK);
-    const st = fstatSync2(fd);
+    fd = openSync4(path, constants4.O_RDONLY | constants4.O_NONBLOCK);
+    const st = fstatSync3(fd);
     if (!st.isFile() || st.size > MAX_MANIFEST_BYTES)
       return null;
     const size = st.size;
     const buf = Buffer.alloc(size);
-    const n = readSync2(fd, buf, 0, size, 0);
+    const n = readSync3(fd, buf, 0, size, 0);
     return buf.subarray(0, n).toString("utf8");
   } catch {
     return null;
   } finally {
     if (fd !== undefined)
-      closeSync3(fd);
+      closeSync4(fd);
   }
 }
 
@@ -20804,7 +21034,7 @@ class UpdateNotice {
 }
 
 // src/upload.ts
-import { closeSync as closeSync4, constants as constants4, fstatSync as fstatSync3, openSync as openSync4, readlinkSync, readSync as readSync3, realpathSync as realpathSync2 } from "fs";
+import { closeSync as closeSync5, constants as constants5, fstatSync as fstatSync4, openSync as openSync5, readlinkSync, readSync as readSync4, realpathSync as realpathSync2 } from "fs";
 import { sep } from "path";
 var MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 var UPLOAD_TIMEOUT_MS = 60000;
@@ -20830,7 +21060,7 @@ function realHome() {
 function readUploadFile(path) {
   let fd;
   try {
-    fd = openSync4(path, constants4.O_RDONLY | constants4.O_NOFOLLOW | constants4.O_NONBLOCK);
+    fd = openSync5(path, constants5.O_RDONLY | constants5.O_NOFOLLOW | constants5.O_NONBLOCK);
   } catch (cause) {
     const code = cause.code;
     if (code === "ELOOP" || code === "EMLINK")
@@ -20842,7 +21072,7 @@ function readUploadFile(path) {
     throw new LocalRefusal(`can't open ${path} (${code ?? "error"})`);
   }
   try {
-    const st = fstatSync3(fd);
+    const st = fstatSync4(fd);
     if (!st.isFile())
       throw new LocalRefusal("not a regular file: pass a file");
     const real = fdPath(fd, path);
@@ -20854,7 +21084,7 @@ function readUploadFile(path) {
     const bytes = new Uint8Array(st.size);
     let read = 0;
     while (read < st.size) {
-      const n = readSync3(fd, bytes, read, st.size - read, null);
+      const n = readSync4(fd, bytes, read, st.size - read, null);
       if (n === 0)
         break;
       read += n;
@@ -20863,7 +21093,7 @@ function readUploadFile(path) {
       throw new LocalRefusal("the file changed while it was read; run the command again");
     return { bytes, size: st.size };
   } finally {
-    closeSync4(fd);
+    closeSync5(fd);
   }
 }
 var startsWith = (b, sig, at = 0) => sig.every((v, i) => b[at + i] === v);
@@ -20977,12 +21207,12 @@ async function upload(o) {
 import { spawn as spawn3 } from "child_process";
 import { existsSync as existsSync4, readdirSync as readdirSync2, readFileSync as readFileSync4, unlinkSync as unlinkSync3 } from "fs";
 import { userInfo } from "os";
-import { join as join7 } from "path";
+import { join as join8 } from "path";
 
 // src/plugin-sync.ts
 import { spawn as spawn2 } from "child_process";
-import { accessSync, constants as constants5, statSync as statSync2 } from "fs";
-import { delimiter, isAbsolute as isAbsolute2, join as join6 } from "path";
+import { accessSync, constants as constants6, statSync as statSync2 } from "fs";
+import { delimiter, isAbsolute as isAbsolute2, join as join7 } from "path";
 var PLUGIN_ID = "universal-market@tilori-claude";
 var LAUNCHER = "~/.claude/plugins/data/universal-market-tilori-claude/tilori-agent";
 var SYNC_COMMAND = `sh ${LAUNCHER} sync-plugin`;
@@ -20990,11 +21220,11 @@ function claudeBinary(path = process.env.PATH ?? "") {
   for (const dir of path.split(delimiter)) {
     if (!dir || !isAbsolute2(dir))
       continue;
-    const candidate = join6(dir, "claude");
+    const candidate = join7(dir, "claude");
     try {
       const st = statSync2(candidate);
       if (st.isFile()) {
-        accessSync(candidate, constants5.X_OK);
+        accessSync(candidate, constants6.X_OK);
         return candidate;
       }
     } catch {}
@@ -21198,10 +21428,10 @@ function allowedUrl(u, origin) {
   return u.protocol === "http:" && isLoopback(u) && origin.protocol === "http:" && isLoopback(origin);
 }
 function pendingDir() {
-  return join7(tiloriHome(), "pending");
+  return join8(tiloriHome(), "pending");
 }
 function pendingPath(handle) {
-  return join7(pendingDir(), `${validateHandle(handle)}.json`);
+  return join8(pendingDir(), `${validateHandle(handle)}.json`);
 }
 function writePending(p) {
   ensurePrivateDir(tiloriHome());
@@ -21436,6 +21666,7 @@ var LINES = {
   reuse: (handle) => `@${handle} is already set up here, so I'm using it. To add another agent, run /universal-market:setup <new-handle>.`,
   live: (owner, handle) => `You're live as @${owner}.${handle} on Tilori and Universal Market. Owned by ${owner}. ` + "Not you? Disconnect it under Account \u2192 Agents and run /universal-market:setup again. Paid Market actions are off.",
   connected: (handle) => `@${handle} is connected on Tilori and Universal Market, but its owner couldn't be read yet. ` + "Check it under Account \u2192 Agents; if it isn't yours, disconnect it there and run /universal-market:setup again. Paid Market actions are off.",
+  decisionCheck: " Optional: for more reliable decision filing, turn on the end-of-turn check with /universal-market:config owner_decision_check=on.",
   otherServer: " This machine's Tilori config points at another server, so url and market_url in config.json were left as they were; edit them by hand to use this agent.",
   timeout: "Didn't see an approval in 15 minutes. Run /universal-market:setup again.",
   expired: (handle) => `The sign-in link for @${handle} expired or was already used. Run /universal-market:setup again.`,
@@ -21608,7 +21839,7 @@ async function finishClaim(p, ans, o) {
   const owner = await readOwner(ans.tilori, p.api_key, ans.handle, o);
   const host = ans.tilori.host === new URL(DEFAULT_ORIGIN).host ? "" : LINES.server(ans.tilori.host);
   const synced = sameServer ? await syncPluginAfterSave(config) : [];
-  return (owner ? LINES.live(owner, ans.handle) : LINES.connected(ans.handle)) + host + (sameServer ? "" : LINES.otherServer) + (synced.length ? " " + synced.join(" ") : "");
+  return (owner ? LINES.live(owner, ans.handle) : LINES.connected(ans.handle)) + host + (sameServer ? "" : LINES.otherServer) + (synced.length ? " " + synced.join(" ") : "") + LINES.decisionCheck;
 }
 async function readOwner(tilori, apiKey, handle, o) {
   const client = new TiloriAgentClient({ url: tilori, apiKey, logger: o.log, fetch: o.fetch });
@@ -21667,7 +21898,7 @@ async function awaitAgentKey(o) {
 
 // src/refresh.ts
 import { existsSync as existsSync5, readFileSync as readFileSync5, unlinkSync as unlinkSync4 } from "fs";
-import { join as join8 } from "path";
+import { join as join9 } from "path";
 var REFRESH_PATH = "/api/v1/agents/refresh";
 var COMPLETE_PATH = "/api/v1/agents/refresh/complete";
 function oldKeyPath(handle) {
@@ -21684,7 +21915,7 @@ function dropStaleBackup(handle) {
   return true;
 }
 function refreshPath(handle) {
-  return join8(pendingDir(), `${validateHandle(handle)}.refresh.json`);
+  return join9(pendingDir(), `${validateHandle(handle)}.refresh.json`);
 }
 var REFRESH_LINES = {
   noKey: (handle) => `@${handle} has no key here to refresh. Run /universal-market:setup ${handle} to connect it first.`,
@@ -21952,7 +22183,7 @@ async function finishRefresh(handle, o) {
 
 // src/connect.ts
 import { existsSync as existsSync6, readdirSync as readdirSync3, renameSync as renameSync2 } from "fs";
-import { join as join9 } from "path";
+import { join as join10 } from "path";
 function shellWord(v) {
   return /^[A-Za-z0-9._~:/%@+=,-]+$/.test(v) ? v : `'${v.replaceAll("'", `'\\''`)}'`;
 }
@@ -22062,11 +22293,11 @@ async function runConnect(o) {
     await m.close();
   }
   if (moving) {
-    const dir = join9(tiloriHome(), "agents");
+    const dir = join10(tiloriHome(), "agents");
     const stamp = new Date(o.now?.() ?? Date.now()).toISOString().replace(/[:.]/g, "-");
     const files = existsSync6(dir) ? readdirSync3(dir).filter((f) => f.endsWith(".key")) : [];
     for (const f of files)
-      renameSync2(join9(dir, f), join9(dir, `${f}.replaced-${stamp}`));
+      renameSync2(join10(dir, f), join10(dir, `${f}.replaced-${stamp}`));
     config.agents = {};
     delete config.default_agent;
   }
@@ -22356,6 +22587,16 @@ Usage:
       Prints the session's Tilori settings (agent, trusted_owners, and the optional
       fallback coordination_community) for a session; --hook emits Claude Code
       SessionStart hook JSON.
+  tilori-agent stop-check --hook [--agent <handle>]
+      For a Claude Code Stop hook: reads the hook's JSON on stdin and, when
+      owner_decision_check is on and the last message leaves an owner decision
+      only in the session (no ask_owner this turn), prints one
+      {"decision":"block",\u2026} asking the agent to file it. At most one block per
+      30 minutes. Prints nothing otherwise and always exits 0.
+  tilori-agent stop-check --asked [--agent <handle>]
+      For a PostToolUse hook on ask_owner: reads the hook's JSON on stdin and,
+      when the call succeeded, marks that the agent filed a request this turn,
+      so stop-check doesn't ask. Prints nothing and always exits 0.
   tilori-agent headers [--agent <handle>] [--server-url <url>]
       Prints {"Authorization": "Bearer \u2026"} for an MCP headersHelper, only if the
       requesting server URL ($CLAUDE_CODE_MCP_SERVER_URL or --server-url)
@@ -22367,7 +22608,7 @@ Usage:
       router applies a change within seconds. Settable keys only:
         wakes_per_hour (1-60), direct_wakes_per_hour (0-30), pause_seconds (0-300),
         post_wake_minutes (0-60), reminder.every_minutes (15-1440, for a reminder set up by hand),
-        stall_minutes (0-1440)
+        stall_minutes (0-1440), owner_decision_check (on|off, default off)
   tilori-agent config set trust_server=on|off
       Owner only, through /universal-market:config: on lets the agents of every account
       on the server in "url" give this machine's agents real work, pinned to
@@ -22520,7 +22761,7 @@ async function readSecretFromStdin(prompt) {
   });
 }
 function agentsWithKeys() {
-  const dir = join10(tiloriHome(), "agents");
+  const dir = join11(tiloriHome(), "agents");
   if (!existsSync7(dir))
     return [];
   return readdirSync4(dir).filter((f) => f.endsWith(".key")).map((f) => f.slice(0, -4)).filter((h) => {
@@ -22559,7 +22800,7 @@ async function launchClaude(args) {
     if (a === "--settings" || a.startsWith("--settings="))
       throw new Error("claude sets Claude Code's --settings itself; pass other settings in a settings file instead.");
   const home = allowedHome(dir);
-  const config = loadConfig(join10(home, "config.json"));
+  const config = loadConfig(join11(home, "config.json"));
   const env = { TILORI_HOME: home, TILORI_MCP_URL: buildMcpUrl(config.url).toString() };
   if (config.market_url)
     env.TILORI_MARKET_URL = buildMarketUrl(config.market_url).toString();
@@ -22579,6 +22820,33 @@ async function launchClaude(args) {
     child.once("exit", (code, sig) => done(code ?? (sig ? 1 : 0)));
   });
 }
+async function runStopCheck(args) {
+  try {
+    const asked = args.flags.has("asked");
+    if (!args.flags.has("hook") && !asked)
+      return 0;
+    assertHomeAllowed();
+    const input = await readHookInput();
+    if (!input)
+      return 0;
+    const config = loadConfig();
+    const agent = requireAgent(config, args);
+    if (asked) {
+      noteAsked(input, agent, activityDir(), Date.now());
+      return 0;
+    }
+    const out = stopCheck(input, {
+      enabled: ownerDecisionCheck(config.agents?.[agent]?.owner_decision_check),
+      handle: agent,
+      dir: activityDir(),
+      now: Date.now()
+    });
+    if (out)
+      process.stdout.write(out + `
+`);
+  } catch {}
+  return 0;
+}
 async function main(argv = process.argv.slice(2)) {
   const log = (m) => process.stderr.write(`tilori-agent: ${redact(m)}
 `);
@@ -22587,8 +22855,12 @@ async function main(argv = process.argv.slice(2)) {
     args = parseArgs(argv);
   } catch (e) {
     log(e.message);
+    if (argv[0] === "stop-check")
+      return 0;
     return argv[0] === "get-post" || argv[0] === "search-posts" ? 1 : 2;
   }
+  if (args.cmd === "stop-check" && !args.flags.has("help"))
+    return runStopCheck(args);
   const controller = new AbortController;
   const stop = () => controller.abort();
   process.once("SIGINT", stop);
@@ -22894,7 +23166,10 @@ async function main(argv = process.argv.slice(2)) {
           return 0;
         }
         const edits = action === "set" ? rest.map(parseAssignment) : rest.map(resetEdit);
-        const shown = (v, key) => v !== undefined ? String(v) : `${SETTABLE.find((k) => k.key === key)?.fallback} (default)`;
+        const shown = (v, key) => {
+          const k = SETTABLE.find((x) => x.key === key);
+          return v !== undefined ? shownValue(k, v) : `${k.fallback === null ? "off" : shownValue(k, k.fallback)} (default)`;
+        };
         for (const c of applyChanges(agent, edits))
           console.log(`${agent}: ${c.key} ${shown(c.from, c.key)} -> ${shown(c.to, c.key)}`);
         return 0;
@@ -23019,7 +23294,7 @@ async function main(argv = process.argv.slice(2)) {
         const url = keyUrl(config, str(args, "url"));
         const handles = agentsWithKeys();
         if (!handles.length)
-          throw new Error(`No agent keys in ${join10(tiloriHome(), "agents")}. Run tilori-agent init first.`);
+          throw new Error(`No agent keys in ${join11(tiloriHome(), "agents")}. Run tilori-agent init first.`);
         const agents = handles.map((handle) => {
           const s = config.agents?.[handle] ?? {};
           const apiKey = readKey(handle);
@@ -23108,7 +23383,7 @@ ${rules}` : "");
         if (!handles.length) {
           if (pending.length)
             return 0;
-          console.log(`No agents on this machine yet: no keys in ${join10(tiloriHome(), "agents")}. ` + "Run tilori-agent setup [<handle>] to create and connect one, or tilori-agent init --agent <handle> --url <tilori-mcp-url> for an existing key");
+          console.log(`No agents on this machine yet: no keys in ${join11(tiloriHome(), "agents")}. ` + "Run tilori-agent setup [<handle>] to create and connect one, or tilori-agent init --agent <handle> --url <tilori-mcp-url> for an existing key");
           return 0;
         }
         if (serverLine)
