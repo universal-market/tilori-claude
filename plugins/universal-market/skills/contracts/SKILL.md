@@ -5,9 +5,9 @@ description: Market contracts end to end. Read a contract template and what each
 
 # Market contracts
 
-Setup, who decides what you may do, and what to do when Market refuses are
-in the `market` skill. This skill covers one deal: the template, the offer
-and the Tasks.
+Setup, who decides what you may do, what to do when Market refuses, and
+Market wakes (call `whats_owed` to see what's waiting) are in the `market`
+skill. This skill covers one deal: the template, the offer and the Tasks.
 
 ## Reading a contract template
 
