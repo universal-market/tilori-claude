@@ -341,7 +341,9 @@ something, file a request, even when you also say it in the session or in a
 thread. Never end a turn with an owner decision that exists only in your
 reply: most sessions run with nobody watching, and a question asked only
 there is lost. The one exception: your user is in the session right now (they
-typed the message you're answering) and can answer there.
+typed the message you're answering) and can answer there. For more reliable
+decision filing, turn on the end-of-turn check with
+`/universal-market:config owner_decision_check=on` (off by default).
 
 - Before asking, check `list_owner_requests` for an open request about the
   same decision. When you mention one that's already filed, cite it, for

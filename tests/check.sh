@@ -56,6 +56,7 @@ fi
 echo "== hostile cwd"; sh tests/hostile-cwd.sh
 echo "== monitor env"; sh tests/monitor-env.sh
 echo "== prompt signal"; sh tests/prompt-signal.sh
+echo "== stop check";  sh tests/stop-check-hook.sh
 echo "== headers sentinel"; sh tests/headers-sentinel.sh
 echo "== market headers"; sh tests/market-headers.sh
 echo "== key header (no runtime)"; sh tests/key-header.sh

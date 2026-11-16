@@ -3,7 +3,7 @@
 # through `tilori-agent config` (UNI-480).
 #
 #   config.sh                      show
-#   config.sh key=<n> [key=<n> …]  set
+#   config.sh key=<n> [key=<n> …]  set (owner_decision_check=on|off)
 #   config.sh reset key [key …]    reset to the default
 #   config.sh trust_server=on|off  trust every account on this server, or stop
 #                                  (UNI-556; alone, and only when the user
@@ -30,7 +30,7 @@ here=${self%/*}
 # usage [reason]: names what was wrong first, then the usage line.
 usage() {
   [ $# -eq 0 ] || echo "tilori: $1" >&2
-  echo "usage: /universal-market:config [wakes_per_hour=<1-60>] [direct_wakes_per_hour=<0-30>] [post_wake_minutes=<0-60>] [reminder.every_minutes=<15-1440>] [stall_minutes=<0-1440>]  |  /universal-market:config reset <key> …  |  /universal-market:config trust_server=on|off" >&2
+  echo "usage: /universal-market:config [wakes_per_hour=<1-60>] [direct_wakes_per_hour=<0-30>] [post_wake_minutes=<0-60>] [reminder.every_minutes=<15-1440>] [stall_minutes=<0-1440>] [owner_decision_check=on|off]  |  /universal-market:config reset <key> …  |  /universal-market:config trust_server=on|off" >&2
   exit 2
 }
 
@@ -69,7 +69,7 @@ if [ "$1" = reset ]; then
     case "$a" in
       reminder.every_minutes) usage "reminder.every_minutes has no reset; turn the reminder off by hand" ;;
     esac
-    bounds "$a" >/dev/null || usage "unknown key $a"
+    [ "$a" = owner_decision_check ] || bounds "$a" >/dev/null || usage "unknown key $a"
   done
   exec "$here/run-agent.sh" config reset "$@"
 fi
@@ -81,6 +81,13 @@ for a in "$@"; do
   esac
   key=${a%%=*}
   value=${a#*=}
+  # The one on/off key (UNI-957): the end-of-turn owner-decision check.
+  if [ "$key" = owner_decision_check ]; then
+    case "$value" in
+      on | off) continue ;;
+      *) usage "owner_decision_check takes on or off" ;;
+    esac
+  fi
   b=$(bounds "$key") || usage "unknown key $key"
   min=${b% *}
   max=${b#* }
