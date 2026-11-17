@@ -7085,8 +7085,8 @@ function checkRules(env) {
 
 // src/cli.ts
 import { spawn as spawn5 } from "child_process";
-import { existsSync as existsSync7, readdirSync as readdirSync4, statSync as statSync4 } from "fs";
-import { isAbsolute as isAbsolute4, join as join12 } from "path";
+import { existsSync as existsSync8, readdirSync as readdirSync4, statSync as statSync5 } from "fs";
+import { isAbsolute as isAbsolute5, join as join13 } from "path";
 
 // src/activity.ts
 import { closeSync as closeSync2, constants as constants2, futimesSync, lstatSync as lstatSync3, openSync as openSync2, readFileSync as readFileSync4, writeSync } from "fs";
@@ -7275,7 +7275,7 @@ import { existsSync as existsSync2, readdirSync, readFileSync as readFileSync3 }
 import { dirname as dirname3, join as join4 } from "path";
 
 // src/version.ts
-var VERSION = "0.3.10";
+var VERSION = "0.3.11";
 
 // src/wake-filter.ts
 import { spawn } from "child_process";
@@ -7301,6 +7301,34 @@ function wholeIn(name, value, min, max, fallback) {
   return value;
 }
 var worldWritable = (mode) => (mode & 2) !== 0;
+function commandArgv(label, command, stat = statSync2, realpath = (p) => realpathSync2.native(p)) {
+  if (!Array.isArray(command) || command.length < 1 || command.length > 32 || !command.every((a) => typeof a === "string" && a.length > 0 && a.length <= 1024 && !a.includes("\x00")))
+    throw new Error(`${label}.command must be a list of 1 to 32 non-empty strings (argv, no shell).`);
+  const program = command[0];
+  if (!isAbsolute2(program))
+    throw new Error(`${label}.command[0] must be an absolute path.`);
+  let resolved;
+  try {
+    resolved = realpath(program);
+  } catch {
+    throw new Error(`${label}.command[0] does not exist.`);
+  }
+  const file = stat(resolved);
+  if (!file.isFile())
+    throw new Error(`${label}.command[0] must be a file.`);
+  if ((file.mode & 73) === 0)
+    throw new Error(`${label}.command[0] is not executable.`);
+  if (worldWritable(file.mode))
+    throw new Error(`${label}.command[0] is world-writable.`);
+  for (let dir = dirname2(resolved);; dir = dirname2(dir)) {
+    const d = stat(dir);
+    if (worldWritable(d.mode))
+      throw new Error(`${label}.command[0] is in a world-writable directory (${dir}).`);
+    if (dir === dirname2(dir))
+      break;
+  }
+  return [resolved, ...command.slice(1)];
+}
 function wakeFilterSettings(value, stat = statSync2, realpath = (p) => realpathSync2.native(p)) {
   if (value === undefined)
     return;
@@ -7310,34 +7338,9 @@ function wakeFilterSettings(value, stat = statSync2, realpath = (p) => realpathS
   for (const key of Object.keys(s))
     if (!["command", "timeout_seconds", "digest_minutes"].includes(key))
       throw new Error(`wake_filter.${key} is not a setting.`);
-  const command = s.command;
-  if (!Array.isArray(command) || command.length < 1 || command.length > 32 || !command.every((a) => typeof a === "string" && a.length > 0 && a.length <= 1024 && !a.includes("\x00")))
-    throw new Error("wake_filter.command must be a list of 1 to 32 non-empty strings (argv, no shell).");
-  const program = command[0];
-  if (!isAbsolute2(program))
-    throw new Error("wake_filter.command[0] must be an absolute path.");
-  let resolved;
-  try {
-    resolved = realpath(program);
-  } catch {
-    throw new Error("wake_filter.command[0] does not exist.");
-  }
-  const file = stat(resolved);
-  if (!file.isFile())
-    throw new Error("wake_filter.command[0] must be a file.");
-  if ((file.mode & 73) === 0)
-    throw new Error("wake_filter.command[0] is not executable.");
-  if (worldWritable(file.mode))
-    throw new Error("wake_filter.command[0] is world-writable.");
-  for (let dir = dirname2(resolved);; dir = dirname2(dir)) {
-    const d = stat(dir);
-    if (worldWritable(d.mode))
-      throw new Error(`wake_filter.command[0] is in a world-writable directory (${dir}).`);
-    if (dir === dirname2(dir))
-      break;
-  }
+  const argv = commandArgv("wake_filter", s.command, stat, realpath);
   return {
-    argv: [resolved, ...command.slice(1)],
+    argv,
     timeoutMs: wholeIn("timeout_seconds", s.timeout_seconds, 1, MAX_FILTER_TIMEOUT_SECONDS, DEFAULT_FILTER_TIMEOUT_SECONDS) * 1000,
     digestMs: wholeIn("digest_minutes", s.digest_minutes, MIN_DIGEST_MINUTES, MAX_DIGEST_MINUTES, DEFAULT_DIGEST_MINUTES) * 60000
   };
@@ -7441,16 +7444,13 @@ function filterEnv(source = process.env) {
   env.LANG = source.LANG || "C.UTF-8";
   return env;
 }
-function runFilter(filter, input, signal) {
-  if (input.events.length > MAX_FILTER_EVENTS)
-    return Promise.resolve({ ok: false, why: "too_large" });
+function runBounded(argv, timeoutMs, stdin, signal, maxBytes = MAX_FILTER_OUTPUT) {
   if (signal?.aborted)
     return Promise.resolve({ ok: false, why: "stopped" });
-  const keys = new Set(input.events.map((e) => e.key));
   return new Promise((resolve) => {
     let child;
     try {
-      child = spawn(filter.argv[0], filter.argv.slice(1), {
+      child = spawn(argv[0], argv.slice(1), {
         stdio: ["pipe", "pipe", "ignore"],
         env: filterEnv(),
         cwd: FILTER_CWD,
@@ -7479,14 +7479,14 @@ function runFilter(filter, input, signal) {
       killGroup();
       resolve(r);
     };
-    const timer = setTimeout(() => finish({ ok: false, why: "timeout" }), filter.timeoutMs);
+    const timer = setTimeout(() => finish({ ok: false, why: "timeout" }), timeoutMs);
     const onStop = () => finish({ ok: false, why: "stopped" });
     signal?.addEventListener("abort", onStop, { once: true });
     child.on("error", () => finish({ ok: false, why: "spawn" }));
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk) => {
       bytes += Buffer.byteLength(chunk);
-      if (bytes > MAX_FILTER_OUTPUT)
+      if (bytes > maxBytes)
         return finish({ ok: false, why: "output" });
       out += chunk;
     });
@@ -7496,8 +7496,7 @@ function runFilter(filter, input, signal) {
         return;
       if (exitCode !== 0)
         return finish({ ok: false, why: "exit" });
-      const decisions = parseDecisions(out, keys);
-      finish(decisions ? { ok: true, decisions } : { ok: false, why: "output" });
+      finish({ ok: true, stdout: out });
     };
     let ended = false;
     child.stdout.on("end", () => {
@@ -7511,9 +7510,82 @@ function runFilter(filter, input, signal) {
       setTimeout(settle, 1000);
     });
     child.stdin.on("error", () => {});
-    child.stdin.end(JSON.stringify(input) + `
-`);
+    child.stdin.end(stdin);
   });
+}
+async function runFilter(filter, input, signal) {
+  if (input.events.length > MAX_FILTER_EVENTS)
+    return { ok: false, why: "too_large" };
+  const keys = new Set(input.events.map((e) => e.key));
+  const r = await runBounded(filter.argv, filter.timeoutMs, JSON.stringify(input) + `
+`, signal);
+  if (!r.ok)
+    return r;
+  const decisions = parseDecisions(r.stdout, keys);
+  return decisions ? { ok: true, decisions } : { ok: false, why: "output" };
+}
+
+// src/reminder-gate.ts
+import { statSync as statSync3, realpathSync as realpathSync3 } from "fs";
+var DEFAULT_GATE_TIMEOUT_SECONDS = 60;
+var MAX_GATE_TIMEOUT_SECONDS = 120;
+var MAX_GATE_FINDINGS = 10;
+var GATE_QUIET_CEILING = 4;
+var MAX_FINDING_CHARS = 200;
+var GATE_FAILURES = ["spawn", "timeout", "exit", "output", "stopped"];
+function reminderGateSettings(value, stat = statSync3, realpath = (p) => realpathSync3.native(p)) {
+  if (value === undefined)
+    return;
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw new Error("reminder.gate must be an object.");
+  const s = value;
+  for (const key of Object.keys(s))
+    if (!["command", "timeout_seconds"].includes(key))
+      throw new Error(`reminder.gate.${key} is not a setting.`);
+  const argv = commandArgv("reminder.gate", s.command, stat, realpath);
+  const t = s.timeout_seconds;
+  if (t !== undefined && (typeof t !== "number" || !Number.isInteger(t) || t < 1 || t > MAX_GATE_TIMEOUT_SECONDS))
+    throw new Error(`reminder.gate.timeout_seconds must be a whole number from 1 to ${MAX_GATE_TIMEOUT_SECONDS}.`);
+  return { argv, timeoutMs: (t ?? DEFAULT_GATE_TIMEOUT_SECONDS) * 1000 };
+}
+var UNSAFE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Cs}\p{Co}\p{Cn}]/gu;
+function cleanFinding(text) {
+  const flat = text.replace(/\s+/g, " ").replace(UNSAFE, "").replace(/ {2,}/g, " ").trim();
+  const chars = Array.from(flat);
+  return chars.length > MAX_FINDING_CHARS ? chars.slice(0, MAX_FINDING_CHARS - 1).join("") + "\u2026" : flat;
+}
+function validFinding(text) {
+  return typeof text === "string" && text.length > 0 && cleanFinding(text) === text;
+}
+function parseGate(stdout) {
+  let raw;
+  try {
+    raw = JSON.parse(stdout);
+  } catch {
+    return null;
+  }
+  if (!raw || typeof raw !== "object" || Array.isArray(raw) || typeof raw.wake !== "boolean")
+    return null;
+  for (const key of Object.keys(raw))
+    if (key !== "wake" && key !== "findings")
+      return null;
+  if (!raw.wake)
+    return raw.findings === undefined || Array.isArray(raw.findings) && raw.findings.length === 0 ? { wake: false } : null;
+  const f = raw.findings ?? [];
+  if (!Array.isArray(f) || f.length > MAX_GATE_FINDINGS || !f.every((x) => typeof x === "string"))
+    return null;
+  return { wake: true, findings: f.map(cleanFinding).filter((x) => x.length > 0) };
+}
+async function runGate(gate, handle, signal) {
+  const input = { v: 1, agent: { handle } };
+  const r = await runBounded(gate.argv, gate.timeoutMs, JSON.stringify(input) + `
+`, signal, MAX_FILTER_OUTPUT);
+  if (!r.ok)
+    return r;
+  const parsed = parseGate(r.stdout);
+  if (!parsed)
+    return { ok: false, why: "output" };
+  return parsed.wake ? { ok: true, wake: true, findings: parsed.findings } : { ok: true, wake: false };
 }
 
 // src/config.ts
@@ -7572,7 +7644,8 @@ function reminderSettings(settings = {}) {
   if (r.only_when_idle !== undefined && typeof r.only_when_idle !== "boolean") {
     throw new Error("reminder.only_when_idle must be true or false.");
   }
-  return { everyMs: r.every_minutes * 60000, prompt: r.prompt, onlyWhenIdle: r.only_when_idle ?? true };
+  const gate = reminderGateSettings(r.gate);
+  return { everyMs: r.every_minutes * 60000, prompt: r.prompt, onlyWhenIdle: r.only_when_idle ?? true, ...gate ? { gate } : {} };
 }
 var UUID_RE2 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 var USERNAME_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/i;
@@ -8097,7 +8170,7 @@ function wakeText(wake) {
   if (wake.market_off !== undefined)
     return marketOffText(wake.market_off) + updateText(wake);
   if (wake.reminder !== undefined)
-    return reminderText(wake.agent, wake.reminder) + droppedText(wake) + backlogText(wake) + resumeText(wake) + postsLeftText(wake) + updateText(wake) + toolsText(wake);
+    return gateText(wake) + reminderText(wake.agent, wake.reminder) + droppedText(wake) + backlogText(wake) + resumeText(wake) + postsLeftText(wake) + updateText(wake) + toolsText(wake);
   const n = wake.events.length;
   const shown = wake.events.slice(0, MAX_REFS_IN_LINE).map(describe);
   const hidden = n - shown.length;
@@ -8226,6 +8299,20 @@ function pollsText(agent, polls) {
 function reminderText(agent, prompt) {
   return `Tilori reminder for agent ${agent} (your own periodic reminder from ~/.config/tilori/config.json, ` + `not a Tilori event; there is nothing to fetch): ${prompt.trim()}`;
 }
+function gateText(wake) {
+  const g = wake.gate;
+  if (!g)
+    return "";
+  if ("failed" in g)
+    return `Reminder (gate failed: ${g.failed}). `;
+  if ("ceiling" in g)
+    return `Reminder (gate ceiling: ${g.ceiling} quiet). `;
+  const n = g.findings.length;
+  if (!n)
+    return `Check-in gate for agent ${wake.agent}: it asked for a check-in but named no finding. `;
+  const list = g.findings.map((f, i) => `(${i + 1}) ${f}`).join(" ");
+  return `Check-in gate for agent ${wake.agent}: ${n} finding${n === 1 ? "" : "s"}: ${list} `;
+}
 function sanitizeWake(raw, agent) {
   if (!raw || typeof raw !== "object" || !Array.isArray(raw.events))
     return null;
@@ -8337,6 +8424,21 @@ function sanitizeWake(raw, agent) {
     if (!validReminderPrompt(raw.reminder) || events.length)
       return null;
     wake.reminder = raw.reminder;
+    const g = raw.gate;
+    if (g !== undefined) {
+      if (!g || typeof g !== "object")
+        return null;
+      if (Array.isArray(g.findings) && g.failed === undefined) {
+        if (g.findings.length > MAX_GATE_FINDINGS || !g.findings.every(validFinding))
+          return null;
+        wake.gate = { findings: [...g.findings] };
+      } else if (g.findings === undefined && g.ceiling === undefined && GATE_FAILURES.includes(g.failed))
+        wake.gate = { failed: g.failed };
+      else if (g.findings === undefined && g.failed === undefined && g.ceiling === GATE_QUIET_CEILING)
+        wake.gate = { ceiling: GATE_QUIET_CEILING };
+      else
+        return null;
+    }
   }
   return wake;
 }
@@ -18856,9 +18958,12 @@ var READ_TOOLS = [
 var PRUNE_TOOL = "unsubscribe_from_events";
 var POST_TOOL = "get_post";
 var SEARCH_TOOL = "search_posts";
+var EXECUTION_TOOL = "get_execution";
 
 class ToolRefused extends Error {
+  code;
 }
+var ERROR_CODE = /^[A-Z][A-Z0-9_]{0,63}$/;
 var ACCESS_GATE = "Access is restricted on this instance";
 var ACCESS_HINT = "Tilori refused this agent because its owner's account is not currently admitted on this instance " + "(for example, the GitHub org membership check lapsed). The key itself may be fine: ask the owner to " + "sign in to the Tilori site again, then retry.";
 function explainAccess(message) {
@@ -18895,21 +19000,27 @@ function unwrap(raw, secrets) {
     throw new Error("Empty response from Tilori MCP server.");
   if (raw.isError) {
     let message = "Tilori MCP tool call failed.";
+    let code;
     const err = raw.structuredContent?.error;
-    if (typeof err?.message === "string")
+    if (typeof err?.message === "string") {
       message = err.message;
-    else if (Array.isArray(raw.content)) {
+      code = err.code;
+    } else if (Array.isArray(raw.content)) {
       const text = raw.content.find((c) => c?.type === "text")?.text;
       if (typeof text === "string") {
         try {
           const parsed = JSON.parse(text);
           message = typeof parsed?.message === "string" ? parsed.message : text;
+          code = parsed?.code ?? parsed?.error?.code;
         } catch {
           message = text;
         }
       }
     }
-    throw new ToolRefused(explainAccess(redact(message, secrets)));
+    const refused = new ToolRefused(explainAccess(redact(message, secrets)));
+    if (typeof code === "string" && ERROR_CODE.test(code))
+      refused.code = code;
+    throw refused;
   }
   if (raw.structuredContent !== undefined) {
     const sc = raw.structuredContent;
@@ -18955,6 +19066,11 @@ class TiloriAgentClient {
     const msg = cause instanceof Error ? cause.message : String(cause ?? "Unknown error");
     const clean = explainTransport(cause, this.endpoint, redact(msg, this.#secrets));
     clean.message = explainAccess(clean.message);
+    const code = cause?.code;
+    if (typeof code === "number" && Number.isInteger(code))
+      clean.status = code;
+    else if (isUnauthorized(cause))
+      clean.status = 401;
     return clean;
   }
   async#tookNewKey() {
@@ -19083,6 +19199,9 @@ class TiloriAgentClient {
   async getPost(postId, options) {
     return this.#invoke(POST_TOOL, { post_id: postId }, options);
   }
+  async getExecutionEvidence(executionId, options) {
+    return this.#invoke(EXECUTION_TOOL, { execution_id: executionId, include: ["contract", "task_outputs"] }, options);
+  }
   async searchPosts(query, cursor, options) {
     const args = { query, max_depth: null, sort: "created_at", limit: 100 };
     if (cursor)
@@ -19154,6 +19273,64 @@ class TiloriAgentClient {
   }
   async acknowledge(subscriptionId, deliveryId, signal) {
     await this.call("acknowledge_events", { subscription_id: subscriptionId, delivery_id: deliveryId }, { signal });
+  }
+}
+
+// src/evidence.ts
+import { randomUUID as randomUUID2 } from "crypto";
+import { closeSync as closeSync3, existsSync as existsSync4, fsyncSync, lstatSync as lstatSync4, openSync as openSync3, realpathSync as realpathSync4, renameSync as renameSync2, unlinkSync as unlinkSync3, writeSync as writeSync2 } from "fs";
+import { basename, dirname as dirname6, isAbsolute as isAbsolute3, join as join7 } from "path";
+var OUT_ADVICE = "Use a path outside any checkout, such as ~/agents/shared/pr-work/<pr>-evidence.json.";
+function gitWorkTree(dir) {
+  for (let d = dir;; ) {
+    if (existsSync4(join7(d, ".git")))
+      return d;
+    const up = dirname6(d);
+    if (up === d)
+      return null;
+    d = up;
+  }
+}
+function checkOut(out) {
+  if (!out || !isAbsolute3(out) || out.endsWith("/"))
+    throw new Error(`--out must be an absolute file path. ${OUT_ADVICE}`);
+  let parent;
+  try {
+    parent = realpathSync4(dirname6(out));
+  } catch {
+    throw new Error("--out: the parent directory doesn't exist.");
+  }
+  if (gitWorkTree(parent))
+    throw new Error(`--out is inside a git work tree. ${OUT_ADVICE}`);
+  const target = join7(parent, basename(out));
+  let st;
+  try {
+    st = lstatSync4(target);
+  } catch {
+    return target;
+  }
+  if (st.isSymbolicLink())
+    throw new Error("--out is a symlink; refusing to write through it.");
+  if (!st.isFile())
+    throw new Error("--out exists and is not a regular file.");
+  return target;
+}
+function writeAtomically(target, body) {
+  const tmp = join7(dirname6(target), `.${basename(target)}.${randomUUID2()}.tmp`);
+  const fd = openSync3(tmp, "wx", 420);
+  try {
+    try {
+      writeSync2(fd, body);
+      fsyncSync(fd);
+    } finally {
+      closeSync3(fd);
+    }
+    renameSync2(tmp, target);
+  } catch (e) {
+    try {
+      unlinkSync3(tmp);
+    } catch {}
+    throw e;
   }
 }
 
@@ -19238,7 +19415,7 @@ class ExecInjector {
 }
 
 // src/router.ts
-import { randomUUID as randomUUID2 } from "crypto";
+import { randomUUID as randomUUID3 } from "crypto";
 
 // src/push.ts
 var TICKET_HEADER = "tilori-stream-ticket";
@@ -19798,6 +19975,7 @@ class Router {
         restSignalAt: 0,
         heldNotice: "",
         reminderAt: cfg.reminder ? Date.now() + cfg.reminder.everyMs : 0,
+        gateQuiet: 0,
         stats: { wakes: 0, events: 0, delayed: 0, reminders: 0 },
         filter: {
           passed: new Set,
@@ -19927,7 +20105,7 @@ class Router {
     const injector = st.injectors.at(-1);
     if (!injector)
       return false;
-    const wake = { wake_id: randomUUID2(), agent: st.cfg.handle, events: [], resync_required: false, ...line };
+    const wake = { wake_id: randomUUID3(), agent: st.cfg.handle, events: [], resync_required: false, ...line };
     Promise.resolve().then(() => injector.deliver(wake)).catch(() => {});
     return true;
   }
@@ -20562,7 +20740,42 @@ class Router {
       this.#log(`[${handle}] reminder skipped: wake cap reached (${st.limiter.perHour}/hour)`);
       return;
     }
-    const wake = { wake_id: randomUUID2(), agent: handle, events: [], resync_required: false, reminder: reminder.prompt };
+    let gate;
+    if (reminder.gate) {
+      const stop = new AbortController;
+      const onOuter = () => stop.abort();
+      signal?.addEventListener("abort", onOuter, { once: true });
+      let kicked = false;
+      st.kick.promise.then(() => {
+        kicked = true;
+        stop.abort();
+      });
+      const r = await runGate(reminder.gate, handle, stop.signal);
+      signal?.removeEventListener("abort", onOuter);
+      if (signal?.aborted)
+        return;
+      if (!r.ok && r.why === "stopped" && kicked) {
+        this.#log(`[${handle}] reminder gate stopped: woken (events, a session or config)`);
+        st.reminderAt = Date.now();
+        return;
+      }
+      if (r.ok && !r.wake) {
+        if (++st.gateQuiet < GATE_QUIET_CEILING) {
+          this.#log(`[${handle}] reminder gated: quiet (${st.gateQuiet} in a row)`);
+          return;
+        }
+        this.#log(`[${handle}] reminder gate said quiet ${GATE_QUIET_CEILING} times in a row; sending the plain reminder`);
+        gate = { ceiling: GATE_QUIET_CEILING };
+      } else if (r.ok)
+        gate = { findings: r.findings };
+      else {
+        this.#log(`[${handle}] reminder gate failed (${r.why}); sending the plain reminder`);
+        gate = { failed: r.why };
+      }
+    }
+    const wake = { wake_id: randomUUID3(), agent: handle, events: [], resync_required: false, reminder: reminder.prompt };
+    if (gate)
+      wake.gate = gate;
     if (st.backlog)
       wake.backlog = structuredClone(st.backlog);
     if (st.filter.dropped)
@@ -20579,6 +20792,7 @@ class Router {
       this.#log(`[${handle}] reminder skipped: injector ${injector.kind} busy`);
       return;
     }
+    st.gateQuiet = 0;
     this.#signal(handle, "woke");
     st.limiter.record();
     st.stats.wakes++;
@@ -20700,7 +20914,7 @@ class Router {
     if (!events.length)
       return fresh;
     const day = this.#filterDay(st);
-    const result = await runFilter(st.cfg.wakeFilter, { v: 1, agent: { handle }, wake_id: randomUUID2(), events }, signal);
+    const result = await runFilter(st.cfg.wakeFilter, { v: 1, agent: { handle }, wake_id: randomUUID3(), events }, signal);
     if (!result.ok) {
       day.failed += events.length;
       this.#log(`[${handle}] wake filter gave no decisions (${result.why}); waking for ${events.length} event(s)`);
@@ -20874,7 +21088,7 @@ class Router {
     const cap = st.limiter.waitMs();
     if (cap > 0)
       return cap;
-    const wake = { wake_id: randomUUID2(), agent: handle, events: [], resync_required: false };
+    const wake = { wake_id: randomUUID3(), agent: handle, events: [], resync_required: false };
     const items = this.#attachFilter(st, wake);
     if (!wake.events.length) {
       this.#filterSent(st, items, { ...wake, filter_dropped: undefined });
@@ -21009,7 +21223,7 @@ class Router {
         limiter = st.directLimiter;
       }
       const marketSend = send.filter((d) => d.lane === "market");
-      const wake = buildWake(handle, send.filter((d) => d.lane === "tilori"), randomUUID2(), st.directSubs);
+      const wake = buildWake(handle, send.filter((d) => d.lane === "tilori"), randomUUID3(), st.directSubs);
       const marketEvents = marketRefs(marketSend);
       if (marketEvents.length || marketSend.some((d) => d.resync_required))
         wake.market = { events: marketEvents, ...marketSend.some((d) => d.resync_required) ? { resync: true } : {} };
@@ -21114,7 +21328,7 @@ class LaneAckFailed extends Error {
 
 // src/settings.ts
 import { watch } from "fs";
-import { basename, dirname as dirname6 } from "path";
+import { basename as basename2, dirname as dirname7 } from "path";
 var MAX_SET_WAKES = 60;
 var MAX_SET_DIRECT = 30;
 var MAX_REMINDER_MINUTES = 1440;
@@ -21325,8 +21539,8 @@ function followConfig(router, log, signal, path = configPath(), debounceMs = 500
   };
   let watcher;
   try {
-    watcher = watch(dirname6(path), (_event, name) => {
-      if (name && name !== basename(path))
+    watcher = watch(dirname7(path), (_event, name) => {
+      if (name && name !== basename2(path))
         return;
       clearTimeout(timer);
       timer = setTimeout(reload, debounceMs);
@@ -21377,8 +21591,8 @@ function showText(agent, s, usage) {
 }
 
 // src/stop-check.ts
-import { closeSync as closeSync3, constants as constants3, futimesSync as futimesSync2, fstatSync as fstatSync2, lstatSync as lstatSync4, openSync as openSync3, readSync as readSync2 } from "fs";
-import { join as join7 } from "path";
+import { closeSync as closeSync4, constants as constants3, futimesSync as futimesSync2, fstatSync as fstatSync2, lstatSync as lstatSync5, openSync as openSync4, readSync as readSync2 } from "fs";
+import { join as join8 } from "path";
 var BLOCK_REASON = "Your last message asks your owner for a decision, but no owner request was filed this turn. " + "If only your owner can decide it, check list_owner_requests and file it with ask_owner; put several related decisions in one request with questions. " + "Cite the request id in your message. " + "If it is already filed, or your user is here and can answer now, or it was not a decision, say so in one line and stop.";
 var STOP_BLOCK_COOLDOWN_MS = 30 * 60000;
 var MATCH_TAIL_BYTES = 4096;
@@ -21409,7 +21623,7 @@ function asksOwner(message) {
 }
 function mtime2(path) {
   try {
-    const st = lstatSync4(path);
+    const st = lstatSync5(path);
     if (!st.isFile())
       return null;
     if (typeof process.getuid === "function" && st.uid !== process.getuid())
@@ -21420,18 +21634,18 @@ function mtime2(path) {
   }
 }
 function touch(path, at) {
-  const fd = openSync3(path, constants3.O_WRONLY | constants3.O_CREAT | (constants3.O_NOFOLLOW ?? 0), 384);
+  const fd = openSync4(path, constants3.O_WRONLY | constants3.O_CREAT | (constants3.O_NOFOLLOW ?? 0), 384);
   try {
     const t = new Date(at);
     futimesSync2(fd, t, t);
   } finally {
-    closeSync3(fd);
+    closeSync4(fd);
   }
 }
 function readOwnFile(path, max, tail = false) {
   let fd;
   try {
-    fd = openSync3(path, constants3.O_RDONLY | (constants3.O_NOFOLLOW ?? 0) | (constants3.O_NONBLOCK ?? 0));
+    fd = openSync4(path, constants3.O_RDONLY | (constants3.O_NOFOLLOW ?? 0) | (constants3.O_NONBLOCK ?? 0));
   } catch {
     return null;
   }
@@ -21450,13 +21664,13 @@ function readOwnFile(path, max, tail = false) {
   } catch {
     return null;
   } finally {
-    closeSync3(fd);
+    closeSync4(fd);
   }
 }
 function readCanAsk(dir, handle) {
   if (!HANDLE_RE.test(handle))
     return false;
-  const raw = readOwnFile(join7(dir, `caps-${handle}`), MAX_CAPS_BYTES);
+  const raw = readOwnFile(join8(dir, `caps-${handle}`), MAX_CAPS_BYTES);
   if (raw === null)
     return false;
   try {
@@ -21495,7 +21709,7 @@ function stopCheck(input, env) {
     return null;
   if (!readCanAsk(env.dir, env.handle))
     return null;
-  const at = (name) => join7(env.dir, `${name}-${env.handle}`);
+  const at = (name) => join8(env.dir, `${name}-${env.handle}`);
   const lastCheck = mtime2(at("stopcheck"));
   const asked = mtime2(at("asked"));
   touch(at("stopcheck"), env.now);
@@ -21521,7 +21735,7 @@ function noteAsked(input, handle, dir, now) {
     return false;
   if (!Array.isArray(r) && r.isError === true)
     return false;
-  touch(join7(dir, `asked-${handle}`), now);
+  touch(join8(dir, `asked-${handle}`), now);
   return true;
 }
 async function readHookInput(stream = process.stdin) {
@@ -21542,7 +21756,7 @@ async function readHookInput(stream = process.stdin) {
 }
 
 // src/update-notice.ts
-import { closeSync as closeSync4, constants as constants4, fstatSync as fstatSync3, openSync as openSync4, readSync as readSync3 } from "fs";
+import { closeSync as closeSync5, constants as constants4, fstatSync as fstatSync3, openSync as openSync5, readSync as readSync3 } from "fs";
 var VERSION2 = /^\d{1,6}\.\d{1,6}\.\d{1,6}$/;
 var MAX_MANIFEST_BYTES = 1e6;
 var RECHECK_MS = 60000;
@@ -21576,7 +21790,7 @@ function installedVersion(text, key) {
 function readBounded(path) {
   let fd;
   try {
-    fd = openSync4(path, constants4.O_RDONLY | constants4.O_NONBLOCK);
+    fd = openSync5(path, constants4.O_RDONLY | constants4.O_NONBLOCK);
     const st = fstatSync3(fd);
     if (!st.isFile() || st.size > MAX_MANIFEST_BYTES)
       return null;
@@ -21588,7 +21802,7 @@ function readBounded(path) {
     return null;
   } finally {
     if (fd !== undefined)
-      closeSync4(fd);
+      closeSync5(fd);
   }
 }
 
@@ -21628,7 +21842,7 @@ class UpdateNotice {
 }
 
 // src/upload.ts
-import { closeSync as closeSync5, constants as constants5, fstatSync as fstatSync4, openSync as openSync5, readlinkSync, readSync as readSync4, realpathSync as realpathSync3 } from "fs";
+import { closeSync as closeSync6, constants as constants5, fstatSync as fstatSync4, openSync as openSync6, readlinkSync, readSync as readSync4, realpathSync as realpathSync5 } from "fs";
 import { sep } from "path";
 var MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 var UPLOAD_TIMEOUT_MS = 60000;
@@ -21640,13 +21854,13 @@ function fdPath(fd, path) {
   try {
     return readlinkSync(`/proc/self/fd/${fd}`);
   } catch {
-    return realpathSync3(path);
+    return realpathSync5(path);
   }
 }
 function realHome() {
   const home = tiloriHome();
   try {
-    return realpathSync3(home);
+    return realpathSync5(home);
   } catch {
     return home;
   }
@@ -21654,7 +21868,7 @@ function realHome() {
 function readUploadFile(path) {
   let fd;
   try {
-    fd = openSync5(path, constants5.O_RDONLY | constants5.O_NOFOLLOW | constants5.O_NONBLOCK);
+    fd = openSync6(path, constants5.O_RDONLY | constants5.O_NOFOLLOW | constants5.O_NONBLOCK);
   } catch (cause) {
     const code = cause.code;
     if (code === "ELOOP" || code === "EMLINK")
@@ -21687,7 +21901,7 @@ function readUploadFile(path) {
       throw new LocalRefusal("the file changed while it was read; run the command again");
     return { bytes, size: st.size };
   } finally {
-    closeSync5(fd);
+    closeSync6(fd);
   }
 }
 var startsWith = (b, sig, at = 0) => sig.every((v, i) => b[at + i] === v);
@@ -21799,24 +22013,24 @@ async function upload(o) {
 
 // src/setup.ts
 import { spawn as spawn4 } from "child_process";
-import { existsSync as existsSync4, readdirSync as readdirSync2, readFileSync as readFileSync5, unlinkSync as unlinkSync3 } from "fs";
+import { existsSync as existsSync5, readdirSync as readdirSync2, readFileSync as readFileSync5, unlinkSync as unlinkSync4 } from "fs";
 import { userInfo } from "os";
-import { join as join9 } from "path";
+import { join as join10 } from "path";
 
 // src/plugin-sync.ts
 import { spawn as spawn3 } from "child_process";
-import { accessSync, constants as constants6, statSync as statSync3 } from "fs";
-import { delimiter, isAbsolute as isAbsolute3, join as join8 } from "path";
+import { accessSync, constants as constants6, statSync as statSync4 } from "fs";
+import { delimiter, isAbsolute as isAbsolute4, join as join9 } from "path";
 var PLUGIN_ID = "universal-market@tilori-claude";
 var LAUNCHER = "~/.claude/plugins/data/universal-market-tilori-claude/tilori-agent";
 var SYNC_COMMAND = `sh ${LAUNCHER} sync-plugin`;
 function claudeBinary(path = process.env.PATH ?? "") {
   for (const dir of path.split(delimiter)) {
-    if (!dir || !isAbsolute3(dir))
+    if (!dir || !isAbsolute4(dir))
       continue;
-    const candidate = join8(dir, "claude");
+    const candidate = join9(dir, "claude");
     try {
-      const st = statSync3(candidate);
+      const st = statSync4(candidate);
       if (st.isFile()) {
         accessSync(candidate, constants6.X_OK);
         return candidate;
@@ -22022,10 +22236,10 @@ function allowedUrl(u, origin) {
   return u.protocol === "http:" && isLoopback(u) && origin.protocol === "http:" && isLoopback(origin);
 }
 function pendingDir() {
-  return join9(tiloriHome(), "pending");
+  return join10(tiloriHome(), "pending");
 }
 function pendingPath(handle) {
-  return join9(pendingDir(), `${validateHandle(handle)}.json`);
+  return join10(pendingDir(), `${validateHandle(handle)}.json`);
 }
 function writePending(p) {
   ensurePrivateDir(tiloriHome());
@@ -22035,7 +22249,7 @@ function writePending(p) {
 }
 function readPending(handle) {
   const path = pendingPath(handle);
-  if (!existsSync4(path))
+  if (!existsSync5(path))
     return null;
   assertPrivate(tiloriHome(), true);
   assertPrivate(pendingDir(), true);
@@ -22079,7 +22293,7 @@ function readPending(handle) {
 }
 function deletePending(handle) {
   try {
-    unlinkSync3(pendingPath(handle));
+    unlinkSync4(pendingPath(handle));
   } catch (cause) {
     if (cause.code !== "ENOENT")
       throw cause;
@@ -22087,7 +22301,7 @@ function deletePending(handle) {
 }
 function listPending() {
   const dir = pendingDir();
-  if (!existsSync4(dir))
+  if (!existsSync5(dir))
     return [];
   return readdirSync2(dir).filter((f) => f.endsWith(".json")).map((f) => f.slice(0, -5)).filter((h) => {
     try {
@@ -22286,7 +22500,7 @@ async function runSetup(o) {
   if (o.handle !== undefined) {
     handle = setupHandle(o.handle);
   } else {
-    if (config.default_agent && existsSync4(keyPath(config.default_agent))) {
+    if (config.default_agent && existsSync5(keyPath(config.default_agent))) {
       o.out(LINES.reuse(validateHandle(config.default_agent)));
       return 0;
     }
@@ -22296,7 +22510,7 @@ async function runSetup(o) {
     handle = fromUser;
     derived = true;
   }
-  if (existsSync4(keyPath(handle))) {
+  if (existsSync5(keyPath(handle))) {
     o.out(LINES.reuse(handle));
     return 0;
   }
@@ -22355,7 +22569,7 @@ async function pollClaim(o) {
     if (o.signal?.aborted)
       break;
     if (ans.kind === "claimed") {
-      if (existsSync4(keyPath(ans.handle))) {
+      if (existsSync5(keyPath(ans.handle))) {
         deletePending(p.handle);
         await o.write(LINES.keyExists(ans.handle));
         return { result: "kept-existing" };
@@ -22458,7 +22672,7 @@ async function awaitAgentKey(o) {
   let saidWaiting = false;
   let agent = o.explicit ?? o.configured ?? null;
   while (!o.signal?.aborted) {
-    if (agent && existsSync4(keyPath(agent)))
+    if (agent && existsSync5(keyPath(agent)))
       return agent;
     let pendingHandle = null;
     try {
@@ -22491,8 +22705,8 @@ async function awaitAgentKey(o) {
 }
 
 // src/refresh.ts
-import { existsSync as existsSync5, readFileSync as readFileSync6, unlinkSync as unlinkSync4 } from "fs";
-import { join as join10 } from "path";
+import { existsSync as existsSync6, readFileSync as readFileSync6, unlinkSync as unlinkSync5 } from "fs";
+import { join as join11 } from "path";
 var REFRESH_PATH = "/api/v1/agents/refresh";
 var COMPLETE_PATH = "/api/v1/agents/refresh/complete";
 function oldKeyPath(handle) {
@@ -22500,7 +22714,7 @@ function oldKeyPath(handle) {
 }
 function dropStaleBackup(handle) {
   const path = oldKeyPath(handle);
-  if (!existsSync5(path))
+  if (!existsSync6(path))
     return false;
   assertPrivate(path);
   if (readFileSync6(path, "utf8").trim() !== readKey(handle))
@@ -22509,7 +22723,7 @@ function dropStaleBackup(handle) {
   return true;
 }
 function refreshPath(handle) {
-  return join10(pendingDir(), `${validateHandle(handle)}.refresh.json`);
+  return join11(pendingDir(), `${validateHandle(handle)}.refresh.json`);
 }
 var REFRESH_LINES = {
   noKey: (handle) => `@${handle} has no key here to refresh. Run /universal-market:setup ${handle} to connect it first.`,
@@ -22543,7 +22757,7 @@ function writeRefresh(p) {
 }
 function deleteFile(path) {
   try {
-    unlinkSync4(path);
+    unlinkSync5(path);
   } catch (cause) {
     if (cause.code !== "ENOENT")
       throw cause;
@@ -22551,7 +22765,7 @@ function deleteFile(path) {
 }
 function readRefresh(handle) {
   const path = refreshPath(handle);
-  if (!existsSync5(path))
+  if (!existsSync6(path))
     return null;
   assertPrivate(tiloriHome(), true);
   assertPrivate(pendingDir(), true);
@@ -22672,9 +22886,9 @@ async function completeRefresh(url, key, o) {
 }
 async function runRefresh(o) {
   const handle = validateHandle(o.handle);
-  if (!existsSync5(keyPath(handle)))
+  if (!existsSync6(keyPath(handle)))
     throw new SetupInputError(REFRESH_LINES.noKey(handle));
-  if (!dropStaleBackup(handle) && existsSync5(oldKeyPath(handle))) {
+  if (!dropStaleBackup(handle) && existsSync6(oldKeyPath(handle))) {
     o.out(REFRESH_LINES.unfinished(handle));
     return 1;
   }
@@ -22753,7 +22967,7 @@ async function swapKey(handle, current, p, tilori, o) {
 }
 async function finishRefresh(handle, o) {
   try {
-    if (!existsSync5(oldKeyPath(handle)) || dropStaleBackup(handle))
+    if (!existsSync6(oldKeyPath(handle)) || dropStaleBackup(handle))
       return null;
     const key = readKey(handle);
     const log = (m) => o.log(redact(m, [key]));
@@ -22776,8 +22990,8 @@ async function finishRefresh(handle, o) {
 }
 
 // src/connect.ts
-import { existsSync as existsSync6, readdirSync as readdirSync3, renameSync as renameSync2 } from "fs";
-import { join as join11 } from "path";
+import { existsSync as existsSync7, readdirSync as readdirSync3, renameSync as renameSync3 } from "fs";
+import { join as join12 } from "path";
 function shellWord(v) {
   return /^[A-Za-z0-9._~:/%@+=,-]+$/.test(v) ? v : `'${v.replaceAll("'", `'\\''`)}'`;
 }
@@ -22887,11 +23101,11 @@ async function runConnect(o) {
     await m.close();
   }
   if (moving) {
-    const dir = join11(tiloriHome(), "agents");
+    const dir = join12(tiloriHome(), "agents");
     const stamp = new Date(o.now?.() ?? Date.now()).toISOString().replace(/[:.]/g, "-");
-    const files = existsSync6(dir) ? readdirSync3(dir).filter((f) => f.endsWith(".key")) : [];
+    const files = existsSync7(dir) ? readdirSync3(dir).filter((f) => f.endsWith(".key")) : [];
     for (const f of files)
-      renameSync2(join11(dir, f), join11(dir, `${f}.replaced-${stamp}`));
+      renameSync3(join12(dir, f), join12(dir, `${f}.replaced-${stamp}`));
     config.agents = {};
     delete config.default_agent;
   }
@@ -23220,6 +23434,15 @@ Usage:
       exactly as Tilori sent them (absent if it didn't), and body. Read-only. Exits 0 on success, 2 when Tilori refuses
       (not found, hidden from this agent, no read scope), 1 on bad input, a
       transport error or no answer within 10 s.
+  tilori-agent market-evidence <execution-uuid> --out <path> [--agent <handle>]
+      Saves one Market execution as evidence for merge-check (UNI-1028):
+      get_execution with the contract block and completed Task outputs,
+      read as the agent from market_url in config.json, written to <path>
+      as Market sent it. Find the execution id with get_transaction. <path>
+      must be absolute, outside any git work tree, and not a symlink; the
+      file is replaced in one step (mode 0644). Read-only on Market. Exits
+      0 when written, 2 when Market refuses (its error code is printed), 1
+      on bad input, a refused --out, a transport error or no answer in 20 s.
   tilori-agent search-posts <commit-sha> [--json] [--agent <handle>]
       Lists the posts Tilori's search matches for a full 40-character
       commit SHA, at any depth, newest first, and prints one JSON object:
@@ -23265,10 +23488,11 @@ function parseArgs(argv) {
     "bytes",
     "home",
     "url-origin",
-    "name"
+    "name",
+    "out"
   ]);
   let rest = [];
-  const takes = { "get-post": 1, "search-posts": 1, upload: 2, "file-info": 1, setup: 1 };
+  const takes = { "get-post": 1, "search-posts": 1, "market-evidence": 1, upload: 2, "file-info": 1, setup: 1 };
   for (let i = 1;i < argv.length; i++) {
     const a = argv[i];
     if (a === "--" && argv[0] === "claude") {
@@ -23306,6 +23530,7 @@ function parseArgs(argv) {
 }
 var POST_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 var GET_POST_TIMEOUT_MS = 1e4;
+var MARKET_EVIDENCE_TIMEOUT_MS = 20000;
 var COMMIT_SHA = /^[0-9a-f]{40}$/;
 var SEARCH_MAX_ITEMS = 500;
 var SEARCH_MAX_PAGES = 200;
@@ -23356,8 +23581,8 @@ async function readSecretFromStdin(prompt) {
   });
 }
 function agentsWithKeys() {
-  const dir = join12(tiloriHome(), "agents");
-  if (!existsSync7(dir))
+  const dir = join13(tiloriHome(), "agents");
+  if (!existsSync8(dir))
     return [];
   return readdirSync4(dir).filter((f) => f.endsWith(".key")).map((f) => f.slice(0, -4)).filter((h) => {
     try {
@@ -23378,9 +23603,9 @@ var HOMELESS = new Set(["help", "--help", "-h"]);
 var LAUNCH_VARS = ["TILORI_HOME", "TILORI_MCP_URL", "TILORI_MARKET_URL", "TILORI_AGENT", "TILORI_SOCKET", "TILORI_URL", "TILORI_LAUNCH_CWD"];
 function launchCwd(env = process.env, fallback = process.cwd()) {
   const want = env.TILORI_LAUNCH_CWD;
-  if (want && isAbsolute4(want)) {
+  if (want && isAbsolute5(want)) {
     try {
-      if (statSync4(want).isDirectory())
+      if (statSync5(want).isDirectory())
         return want;
     } catch {}
   }
@@ -23395,7 +23620,7 @@ async function launchClaude(args) {
     if (a === "--settings" || a.startsWith("--settings="))
       throw new Error("claude sets Claude Code's --settings itself; pass other settings in a settings file instead.");
   const home = allowedHome(dir);
-  const config = loadConfig(join12(home, "config.json"));
+  const config = loadConfig(join13(home, "config.json"));
   const env = { TILORI_HOME: home, TILORI_MCP_URL: buildMcpUrl(config.url).toString() };
   if (config.market_url)
     env.TILORI_MARKET_URL = buildMarketUrl(config.market_url).toString();
@@ -23452,7 +23677,7 @@ async function main(argv = process.argv.slice(2)) {
     log(e.message);
     if (argv[0] === "stop-check")
       return 0;
-    return argv[0] === "get-post" || argv[0] === "search-posts" ? 1 : 2;
+    return argv[0] === "get-post" || argv[0] === "search-posts" || argv[0] === "market-evidence" ? 1 : 2;
   }
   if (args.cmd === "stop-check" && !args.flags.has("help"))
     return runStopCheck(args);
@@ -23643,6 +23868,52 @@ async function main(argv = process.argv.slice(2)) {
         } finally {
           await client.close();
         }
+      }
+      case "market-evidence": {
+        const id = args.positionals[0] ?? "";
+        if (!POST_ID.test(id))
+          throw new Error("market-evidence needs a full execution UUID.");
+        if (args.flags.has("url") || args.flags.has("market-url"))
+          throw new Error("market-evidence takes no URL: it reads market_url from config.json.");
+        const out = str(args, "out");
+        if (!out)
+          throw new Error("market-evidence needs --out <path>.");
+        const target = checkOut(out);
+        const config = loadConfig();
+        const agent = requireAgent(config, args);
+        const market = marketKeyUrl(config);
+        if (!market)
+          throw new Error('No "market_url" in config.json; run tilori-agent init with --market-url.');
+        const client = new TiloriAgentClient({ url: market, apiKey: readKey(agent) });
+        const timeout = AbortSignal.timeout(MARKET_EVIDENCE_TIMEOUT_MS);
+        const abort = AbortSignal.any([signal, timeout]);
+        let record;
+        try {
+          record = await Promise.race([
+            client.getExecutionEvidence(id, { signal: abort, timeout: MARKET_EVIDENCE_TIMEOUT_MS }),
+            new Promise((_, reject) => abort.addEventListener("abort", () => reject(new Error("market-evidence: no answer in time.")), { once: true }))
+          ]);
+        } catch (cause) {
+          if (cause instanceof ToolRefused) {
+            log(`market-evidence: Market refused the read (${cause.code ?? "no error code"}).`);
+            return 2;
+          }
+          if (abort.aborted)
+            throw new Error("market-evidence: no answer in time.");
+          const status = cause.status;
+          throw new Error(typeof status === "number" ? `market-evidence: Market answered HTTP ${status}.` : "market-evidence: could not read from Market.");
+        } finally {
+          await client.close();
+        }
+        if (!record || typeof record !== "object" || record.id !== id)
+          throw new Error("market-evidence: Market returned a different execution.");
+        if (!record.contract || typeof record.contract !== "object")
+          throw new Error("market-evidence: Market sent no contract block (a server from before UNI-1028 step B?); nothing written.");
+        writeAtomically(target, JSON.stringify(record) + `
+`);
+        process.stdout.write(`${target}
+`);
+        return 0;
       }
       case "search-posts": {
         const sha = args.positionals[0] ?? "";
@@ -23890,7 +24161,7 @@ async function main(argv = process.argv.slice(2)) {
         const url = keyUrl(config, str(args, "url"));
         const handles = agentsWithKeys();
         if (!handles.length)
-          throw new Error(`No agent keys in ${join12(tiloriHome(), "agents")}. Run tilori-agent init first.`);
+          throw new Error(`No agent keys in ${join13(tiloriHome(), "agents")}. Run tilori-agent init first.`);
         const agents = handles.map((handle) => {
           const s = config.agents?.[handle] ?? {};
           const apiKey = readKey(handle);
@@ -23980,7 +24251,7 @@ ${rules}` : "");
         if (!handles.length) {
           if (pending.length)
             return 0;
-          console.log(`No agents on this machine yet: no keys in ${join12(tiloriHome(), "agents")}. ` + "Run tilori-agent setup [<handle>] to create and connect one, or tilori-agent init --agent <handle> --url <tilori-mcp-url> for an existing key");
+          console.log(`No agents on this machine yet: no keys in ${join13(tiloriHome(), "agents")}. ` + "Run tilori-agent setup [<handle>] to create and connect one, or tilori-agent init --agent <handle> --url <tilori-mcp-url> for an existing key");
           return 0;
         }
         if (serverLine)
