@@ -7085,8 +7085,8 @@ function checkRules(env) {
 
 // src/cli.ts
 import { spawn as spawn5 } from "child_process";
-import { existsSync as existsSync8, readFileSync as readFileSync9, readdirSync as readdirSync4, statSync as statSync5 } from "fs";
-import { isAbsolute as isAbsolute5, join as join14 } from "path";
+import { existsSync as existsSync8, readFileSync as readFileSync10, readdirSync as readdirSync4, statSync as statSync5 } from "fs";
+import { isAbsolute as isAbsolute5, join as join15 } from "path";
 
 // src/activity.ts
 import { closeSync as closeSync2, constants as constants2, futimesSync, lstatSync as lstatSync3, openSync as openSync2, readFileSync as readFileSync4, writeSync } from "fs";
@@ -7275,7 +7275,7 @@ import { existsSync as existsSync2, readdirSync, readFileSync as readFileSync3 }
 import { dirname as dirname3, join as join4 } from "path";
 
 // src/version.ts
-var VERSION = "0.3.13";
+var VERSION = "0.3.15";
 
 // src/wake-filter.ts
 import { spawn } from "child_process";
@@ -7666,6 +7666,16 @@ function wakeFilterConfig(config, handle) {
     return {};
   const p = coordinationPolicy(config, handle);
   return { wakeFilter, trustedOwners: p.trusted_owners, trustAll: p.trust_server };
+}
+function recordDecisions(value) {
+  if (value === undefined)
+    return false;
+  if (typeof value !== "boolean")
+    throw new Error("record_decisions must be true or false.");
+  return value;
+}
+function recorderConfig(config, handle) {
+  return recordDecisions(config.agents?.[handle]?.record_decisions) ? { recordDecisions: true } : {};
 }
 function trustServerState(config) {
   const t = config.trust_server;
@@ -19445,7 +19455,7 @@ import { join as join8 } from "path";
 
 // src/pr-work-select.ts
 var REVIEW_KINDS = ["code", "security", "docs"];
-var RULE_ORDER = ["implementer", "client", "other_reviewer", "same_owner"];
+var RULE_ORDER = ["implementer", "client", "other_reviewer", "same_bot"];
 var KNOWN = new Set(REVIEW_KINDS);
 var isKnownKind = (kind) => KNOWN.has(kind);
 var hasIdentity = (value) => !!value && typeof value.agent === "string" && !!value.agent && typeof value.owner === "string" && !!value.owner;
@@ -19478,7 +19488,7 @@ function selectReviewers(input) {
       implementer: [],
       client: [],
       other_reviewer: [],
-      same_owner: []
+      same_bot: []
     };
     for (const candidate of candidates) {
       if (candidate.agent === input.implementer.agent) {
@@ -19497,8 +19507,9 @@ function selectReviewers(input) {
         handles.other_reviewer.push(candidate.handle);
         continue;
       }
-      if (candidate.owner === input.implementer.owner) {
-        handles.same_owner.push(candidate.handle);
+      const bot = candidate.github_user_id;
+      if (bot !== undefined && (bot === input.implementer.github_user_id || input.opener && bot === input.opener.github_user_id || picks.some((p) => p.agent.github_user_id === bot))) {
+        handles.same_bot.push(candidate.handle);
         continue;
       }
       pick = candidate;
@@ -19546,7 +19557,10 @@ function parseAgent(value) {
   const handle = isRecord(value) && typeof value.handle === "string" && value.handle ? value.handle : "?";
   if (!isRecord(value) || typeof value.agent !== "string" || !value.agent || typeof value.handle !== "string" || !value.handle || typeof value.owner !== "string" || !value.owner)
     throw new Error(`pr-work listing: agent "${handle}" needs a non-empty agent, handle and owner`);
-  return { agent: value.agent, handle: value.handle, owner: value.owner };
+  const bot = value.github_user_id;
+  if (bot !== undefined && (typeof bot !== "number" || !Number.isSafeInteger(bot) || bot <= 0))
+    throw new Error(`pr-work listing: agent "${handle}" github_user_id must be a positive whole number`);
+  return { agent: value.agent, handle: value.handle, owner: value.owner, ...bot === undefined ? {} : { github_user_id: bot } };
 }
 function parseAgents(value) {
   if (!isRecord(value))
@@ -19578,7 +19592,7 @@ function buildPrWorkListing(options) {
   try {
     text = readFileSync6(path, "utf8");
   } catch {
-    throw new Error(`pr-work listing: could not read defaults file ${path}.`);
+    throw new Error(`pr-work listing: could not read defaults file ${path}. Pass --repo-dir <universal_market checkout> (or --defaults <file>), or run from the checkout root.`);
   }
   let defaults;
   try {
@@ -20143,6 +20157,208 @@ class WakeLimiter {
   }
 }
 
+// src/policy.ts
+class BuiltinPolicy {
+  now;
+  #normal;
+  #direct;
+  #directOff = null;
+  constructor(normalPerHour, directPerHour, now = Date.now) {
+    this.now = now;
+    if (!Number.isInteger(directPerHour) || directPerHour < 0) {
+      throw new Error("direct_wakes_per_hour must be a non-negative integer.");
+    }
+    this.#normal = new WakeLimiter(normalPerHour, now);
+    this.#direct = directPerHour === 0 ? null : new WakeLimiter(directPerHour, now);
+  }
+  #lane(lane) {
+    return lane === "normal" ? this.#normal : this.#direct;
+  }
+  decide({ hasDirect }) {
+    const normal = this.#normal.waitMs();
+    if (normal === 0)
+      return { lane: "normal" };
+    const direct = hasDirect ? this.waitMs("direct") : Infinity;
+    if (direct === 0)
+      return { lane: "direct" };
+    return { waitMs: Math.min(normal, direct) };
+  }
+  record(lane) {
+    this.#lane(lane)?.record();
+  }
+  waitMs(lane) {
+    return this.#lane(lane)?.waitMs() ?? Infinity;
+  }
+  afterWakeWaitMs(lane) {
+    const after = (l) => {
+      const limiter = this.#lane(l);
+      return !limiter ? Infinity : l === lane ? limiter.waitAfterNextMs() : limiter.waitMs();
+    };
+    const normal = after("normal");
+    const direct = after("direct");
+    return normal > 0 && direct > 0 ? Math.min(normal, direct) : 0;
+  }
+  canRemind() {
+    return this.#normal.waitMs() === 0;
+  }
+  resize(lane, perHour) {
+    if (lane === "normal") {
+      this.#normal.resize(perHour);
+      return;
+    }
+    if (perHour === 0) {
+      this.#directOff = this.#direct ?? this.#directOff;
+      this.#direct = null;
+      return;
+    }
+    this.#direct = this.#direct ?? this.#directOff ?? new WakeLimiter(perHour, this.now);
+    this.#directOff = null;
+    this.#direct.resize(perHour);
+  }
+  limit(lane) {
+    return this.#lane(lane)?.perHour ?? 0;
+  }
+  used(lane) {
+    return this.#lane(lane)?.used ?? null;
+  }
+}
+
+// src/recorder.ts
+import { closeSync as closeSync4, constants as constants3, fstatSync as fstatSync2, lstatSync as lstatSync5, openSync as openSync4, readFileSync as readFileSync7, renameSync as renameSync3, writeFileSync as writeFileSync2, writeSync as writeSync3 } from "fs";
+import { join as join9 } from "path";
+var RECORDER_MAX_BYTES = 1024 * 1024;
+var RECORDER_MAX_AGE_MS = 7 * 24 * 3600000;
+var RECORDER_MAX_EVENTS = 20;
+var UUID_RE4 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+var WORD_RE = /^[a-z][a-z._-]{0,39}$/;
+var HANDLE_RE2 = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+var DECISIONS = new Set(["wake", "hold", "digest", "drop"]);
+var word = (value) => typeof value === "string" && WORD_RE.test(value) ? value : "other";
+var uuid2 = (value) => typeof value === "string" && UUID_RE4.test(value.toLowerCase()) ? value.toLowerCase() : "invalid-id";
+
+class DecisionRecorder {
+  #dir;
+  #path;
+  #handle;
+  #maxBytes;
+  #maxAgeMs;
+  #now;
+  #onError;
+  #fd = null;
+  #size = 0;
+  #off = false;
+  constructor(dir, handle, options = {}) {
+    if (!HANDLE_RE2.test(handle))
+      throw new Error("recorder: bad handle");
+    this.#dir = dir;
+    this.#handle = handle;
+    this.#path = join9(dir, `${handle}.jsonl`);
+    this.#maxBytes = options.maxBytes ?? RECORDER_MAX_BYTES;
+    this.#maxAgeMs = options.maxAgeMs ?? RECORDER_MAX_AGE_MS;
+    this.#now = options.now ?? Date.now;
+    this.#onError = options.onError ?? (() => {});
+  }
+  get path() {
+    return this.#path;
+  }
+  get disabled() {
+    return this.#off;
+  }
+  record(input) {
+    if (this.#off)
+      return;
+    try {
+      if (!DECISIONS.has(input.decision))
+        return;
+      const events = input.events.slice(0, RECORDER_MAX_EVENTS).map((e) => ({ kind: word(e.kind), entity_type: word(e.entity_type), id: uuid2(e.entity_id) }));
+      const line = JSON.stringify({
+        at: new Date(this.#now()).toISOString(),
+        recipient: this.#handle,
+        decision: input.decision,
+        lane: input.lane === "normal" || input.lane === "direct" ? input.lane : null,
+        events,
+        ...input.events.length > events.length ? { more: input.events.length - events.length } : {}
+      });
+      const fd = this.#open();
+      if (this.#size + line.length + 1 > this.#maxBytes)
+        this.#prune(line.length + 1);
+      writeSync3(this.#fd ?? fd, `${line}
+`);
+      this.#size += line.length + 1;
+    } catch (e) {
+      this.#fail(e);
+    }
+  }
+  close() {
+    if (this.#fd === null)
+      return;
+    try {
+      closeSync4(this.#fd);
+    } catch {}
+    this.#fd = null;
+  }
+  #fail(e) {
+    this.#off = true;
+    this.close();
+    this.#onError(`decision recording stopped: ${e instanceof Error ? e.message : "unknown error"}`);
+  }
+  #open() {
+    if (this.#fd !== null)
+      return this.#fd;
+    ensurePrivateDir(this.#dir);
+    const fd = openSync4(this.#path, constants3.O_WRONLY | constants3.O_APPEND | constants3.O_CREAT | (constants3.O_NOFOLLOW ?? 0), 384);
+    try {
+      const st = fstatSync2(fd);
+      const uid = typeof process.getuid === "function" ? process.getuid() : undefined;
+      if (!st.isFile())
+        throw new Error("recording file is not a regular file");
+      if (uid !== undefined && st.uid !== uid)
+        throw new Error("recording file is not owned by this user");
+      if ((st.mode & 63) !== 0)
+        throw new Error("recording file is readable by other users");
+      if (st.nlink !== 1)
+        throw new Error("recording file has more than one link");
+      this.#size = st.size;
+    } catch (e) {
+      closeSync4(fd);
+      throw e;
+    }
+    this.#fd = fd;
+    return fd;
+  }
+  #prune(incoming) {
+    const st = lstatSync5(this.#path);
+    if (st.isSymbolicLink() || !st.isFile())
+      throw new Error("recording file changed");
+    const cutoff = this.#now() - this.#maxAgeMs;
+    let lines = readFileSync7(this.#path, "utf8").split(`
+`).filter((l) => {
+      if (!l)
+        return false;
+      try {
+        const at = Date.parse(JSON.parse(l).at);
+        return Number.isFinite(at) && at >= cutoff;
+      } catch {
+        return false;
+      }
+    });
+    const size = () => lines.reduce((n, l) => n + l.length + 1, 0) + incoming;
+    while (lines.length && size() > this.#maxBytes)
+      lines = lines.slice(Math.ceil(lines.length / 2));
+    const tmp = join9(this.#dir, `.${this.#handle}.jsonl.tmp`);
+    const fd = openSync4(tmp, constants3.O_WRONLY | constants3.O_CREAT | constants3.O_TRUNC | (constants3.O_NOFOLLOW ?? 0), 384);
+    try {
+      writeFileSync2(fd, lines.map((l) => `${l}
+`).join(""));
+    } finally {
+      closeSync4(fd);
+    }
+    renameSync3(tmp, this.#path);
+    this.close();
+    this.#open();
+  }
+}
+
 // src/router.ts
 var PUSH_POLL_GAP_MS = 1000;
 var PUSH_FALLBACK_AFTER_MS = 5 * 60000;
@@ -20214,14 +20430,6 @@ function dmNote(ds) {
   const shown = dms.slice(0, 5).map((e) => `${DM_KINDS.has(e.kind) ? e.kind : "dm.other"} ${isUuid(e.entity_id) ? e.entity_id : "invalid-id"}`).join(", ");
   return ` [dm ${shown}${dms.length > 5 ? `, +${dms.length - 5} more` : ""}]`;
 }
-function directLimiter(perHour, now) {
-  const n = perHour ?? DEFAULT_DIRECT_WAKES_PER_HOUR;
-  if (n === 0)
-    return null;
-  if (!Number.isInteger(n) || n < 0)
-    throw new Error("direct_wakes_per_hour must be a non-negative integer.");
-  return new WakeLimiter(n, now);
-}
 function failReason(cause) {
   const name = cause instanceof Error ? cause.name : "";
   const text = errText(cause);
@@ -20289,6 +20497,7 @@ class Router {
   #restSignalMs;
   #now;
   #signalDir;
+  #recordingsDir;
   #signalFailed = new Set;
   #pollFailMs;
   #keyRetryMs;
@@ -20310,6 +20519,7 @@ class Router {
     this.#restSignalMs = options.restSignalMs ?? REST_SIGNAL_MS;
     this.#now = options.now ?? Date.now;
     this.#signalDir = options.signalDir;
+    this.#recordingsDir = options.recordingsDir;
     this.#pollFailMs = options.pollFailMs;
     this.#keyRetryMs = options.keyRetryMs ?? 60000;
     this.#marketOffMs = options.marketOffMs ?? MARKET_OFF_MS;
@@ -20323,13 +20533,15 @@ class Router {
         throw new Error(`Agent ${cfg.handle}: the Market lane needs its own client.`);
       const st = {
         cfg,
+        recorder: cfg.recordDecisions && this.#recordingsDir !== undefined ? new DecisionRecorder(this.#recordingsDir, cfg.handle, {
+          now: this.#now,
+          onError: (m) => this.#log(`[${cfg.handle}] ${m}`)
+        }) : null,
         lanes: {
           tilori: newLane("tilori", cfg.client, cfg.subscriptions),
           market: cfg.market ? newLane("market", cfg.market.client, [MARKET_SUBSCRIPTION]) : null
         },
-        limiter: new WakeLimiter(cfg.wakesPerHour ?? DEFAULT_WAKES_PER_HOUR, this.#now),
-        directLimiter: directLimiter(cfg.directWakesPerHour, this.#now),
-        directOff: null,
+        policy: new BuiltinPolicy(cfg.wakesPerHour ?? DEFAULT_WAKES_PER_HOUR, cfg.directWakesPerHour ?? DEFAULT_DIRECT_WAKES_PER_HOUR, this.#now),
         directSubs: new Set,
         capHeld: new Set,
         recent: new Map,
@@ -20630,10 +20842,10 @@ class Router {
     const st = this.#agents.get(handle);
     if (!st)
       return null;
-    const d = st.directLimiter;
+    const directUsed = st.policy.used("direct");
     return {
-      wakes: { used: st.limiter.used, limit: st.limiter.perHour },
-      direct: d ? { used: d.used, limit: d.perHour } : null,
+      wakes: { used: st.policy.used("normal"), limit: st.policy.limit("normal") },
+      direct: directUsed === null ? null : { used: directUsed, limit: st.policy.limit("direct") },
       held: st.capHeld.size ? st.stats.delayed : 0,
       ...st.cfg.wakeFilter ? { filter: { ...this.#filterDay(st), digest_held: st.filter.digest.length } } : {}
     };
@@ -20647,17 +20859,10 @@ class Router {
       if (from !== to)
         changed.push(`${key} ${from} -> ${to}`);
     };
-    note("wakes_per_hour", st.limiter.perHour, live.wakesPerHour);
-    st.limiter.resize(live.wakesPerHour);
-    note("direct_wakes_per_hour", st.directLimiter?.perHour ?? 0, live.directWakesPerHour);
-    if (live.directWakesPerHour === 0) {
-      st.directOff = st.directLimiter ?? st.directOff;
-      st.directLimiter = null;
-    } else {
-      st.directLimiter = st.directLimiter ?? st.directOff ?? new WakeLimiter(live.directWakesPerHour, this.#now);
-      st.directOff = null;
-      st.directLimiter.resize(live.directWakesPerHour);
-    }
+    note("wakes_per_hour", st.policy.limit("normal"), live.wakesPerHour);
+    st.policy.resize("normal", live.wakesPerHour);
+    note("direct_wakes_per_hour", st.policy.limit("direct"), live.directWakesPerHour);
+    st.policy.resize("direct", live.directWakesPerHour);
     note("pause_seconds", st.cfg.pauseSeconds ?? this.#broadPauseMs / 1000, live.pauseSeconds);
     note("post_wake_minutes", st.cfg.postWakeMinutes ?? 0, live.postWakeMinutes);
     note("stall_minutes", st.cfg.stallMinutes ?? 0, live.stallMinutes);
@@ -20704,6 +20909,7 @@ class Router {
           signal?.removeEventListener("abort", end);
         }
       } finally {
+        st.recorder?.close();
         await Promise.all(this.#laneList(st).map((lane) => lane.client.close()));
       }
     }));
@@ -21136,8 +21342,8 @@ class Router {
       this.#log(`[${handle}] reminder skipped: no injector registered`);
       return;
     }
-    if (st.limiter.waitMs() > 0) {
-      this.#log(`[${handle}] reminder skipped: wake cap reached (${st.limiter.perHour}/hour)`);
+    if (!st.policy.canRemind()) {
+      this.#log(`[${handle}] reminder skipped: wake cap reached (${st.policy.limit("normal")}/hour)`);
       return;
     }
     let gate;
@@ -21180,7 +21386,7 @@ class Router {
       wake.backlog = structuredClone(st.backlog);
     if (st.filter.dropped)
       wake.filter_dropped = structuredClone(st.filter.dropped);
-    this.#noteLastWake(st, wake, st.limiter);
+    this.#noteLastWake(st, wake, "normal");
     await this.#noteProfile(st, wake, signal);
     const result = await settle2(injector.deliver(wake));
     if (result === "gone") {
@@ -21194,7 +21400,7 @@ class Router {
     }
     st.gateQuiet = 0;
     this.#signal(handle, "woke");
-    st.limiter.record();
+    st.policy.record("normal");
     st.stats.wakes++;
     st.stats.reminders++;
     if (wake.backlog)
@@ -21238,12 +21444,10 @@ class Router {
       this.#log(`[${handle}] blocked on a prompt since ${clock(blockedSince)}, ${n} wake${n === 1 ? "" : "s"} pending`);
     }
   }
-  #noteLastWake(st, wake, limiter) {
-    const afterThis = (l) => !l ? Infinity : l === limiter ? l.waitAfterNextMs() : l.waitMs();
-    const general = afterThis(st.limiter);
-    const direct = afterThis(st.directLimiter);
-    if (general > 0 && direct > 0)
-      wake.wakes_resume_at = this.#now() + Math.min(general, direct);
+  #noteLastWake(st, wake, lane) {
+    const wait = st.policy.afterWakeWaitMs(lane);
+    if (wait > 0)
+      wake.wakes_resume_at = this.#now() + wait;
   }
   async#noteProfile(st, wake, signal) {
     await this.#readProfile(st, signal);
@@ -21357,6 +21561,12 @@ class Router {
           demoted.delete(k);
       items.length = 0;
     }
+    if (st.recorder)
+      for (const action of ["digest", "drop"]) {
+        const refs = [...demoted].filter(([, d]) => d.action === action).map(([k]) => byKey.get(k).ref);
+        if (refs.length)
+          st.recorder.record({ decision: action, lane: null, events: refs });
+      }
     day.woke += events.length - demoted.size;
     if (!demoted.size)
       return fresh;
@@ -21485,7 +21695,7 @@ class Router {
     const injector = st.injectors.at(-1);
     if (!injector)
       return this.#retryMs * 5;
-    const cap = st.limiter.waitMs();
+    const cap = st.policy.waitMs("normal");
     if (cap > 0)
       return cap;
     const wake = { wake_id: randomUUID3(), agent: handle, events: [], resync_required: false };
@@ -21496,7 +21706,7 @@ class Router {
     }
     if (st.backlog)
       wake.backlog = structuredClone(st.backlog);
-    this.#noteLastWake(st, wake, st.limiter);
+    this.#noteLastWake(st, wake, "normal");
     await this.#noteProfile(st, wake, signal);
     const result = await settle2(injector.deliver(wake));
     if (result === "gone") {
@@ -21506,7 +21716,7 @@ class Router {
     if (result !== "accepted")
       return Math.min(60000, this.#retryMs * 4);
     this.#signal(handle, "woke");
-    st.limiter.record();
+    st.policy.record("normal");
     st.stats.wakes++;
     st.stats.events += wake.events.length;
     if (wake.backlog)
@@ -21606,21 +21816,25 @@ class Router {
         return this.#retryMs * 5;
       }
       let send = fresh;
-      let limiter = st.limiter;
-      const capWait = st.limiter.waitMs();
-      if (capWait > 0) {
-        const direct = fresh.filter((d) => st.directSubs.has(d.subscription_id) || d.events.some((e) => isDirectKind(e.kind)));
-        const directWait = direct.length && st.directLimiter ? st.directLimiter.waitMs() : Infinity;
+      const direct = fresh.filter((d) => st.directSubs.has(d.subscription_id) || d.events.some((e) => isDirectKind(e.kind)));
+      const decision = st.policy.decide({ hasDirect: direct.length > 0 });
+      const lane = "lane" in decision ? decision.lane : "normal";
+      if (!("lane" in decision) || lane === "direct") {
+        const delayed = !("lane" in decision);
+        if ("waitMs" in decision) {
+          const fresher = fresh.filter((d) => !st.capHeld.has(d.delivery_id));
+          if (fresher.length)
+            st.recorder?.record({ decision: "hold", lane: null, events: toRefs(fresher) });
+        }
         for (const d of fresh)
-          if (directWait > 0 || !direct.includes(d))
+          if (delayed || !direct.includes(d))
             st.capHeld.add(d.delivery_id);
-        if (directWait > 0) {
+        if ("waitMs" in decision) {
           st.stats.delayed = count;
-          notice(`wake cap reached (${st.limiter.perHour}/hour); delaying ${count} event(s) for ${Math.ceil(Math.min(capWait, directWait) / 1000)} s${dmNote(fresh)}`);
-          return Math.min(capWait, directWait, 60000);
+          notice(`wake cap reached (${st.policy.limit("normal")}/hour); delaying ${count} event(s) for ${Math.ceil(decision.waitMs / 1000)} s${dmNote(fresh)}`);
+          return Math.min(decision.waitMs, 60000);
         }
         send = direct;
-        limiter = st.directLimiter;
       }
       const marketSend = send.filter((d) => d.lane === "market");
       const wake = buildWake(handle, send.filter((d) => d.lane === "tilori"), randomUUID3(), st.directSubs);
@@ -21642,7 +21856,7 @@ class Router {
         wake.held_back = heldBack;
       if (stillHeld)
         wake.still_held = stillHeld;
-      this.#noteLastWake(st, wake, limiter);
+      this.#noteLastWake(st, wake, lane);
       await this.#noteProfile(st, wake, signal);
       const slow = setTimeout(() => this.#log(`[${handle}] injector ${injector.kind} has not accepted the wake after ${Math.round(this.#slowDeliverMs / 1000)} s; ${count} event(s) stay unacked${dmNote(send)}`), this.#slowDeliverMs);
       slow.unref?.();
@@ -21667,7 +21881,8 @@ class Router {
       if (send.some((d) => d.lane === "tilori" && !st.directSubs.has(d.subscription_id)))
         st.plainWokeAt = Date.now();
       this.#signal(handle, "woke");
-      limiter.record();
+      st.policy.record(lane);
+      st.recorder?.record({ decision: "wake", lane, events: toRefs(send) });
       if (st.cfg.reminder?.onlyWhenIdle)
         st.reminderAt = Date.now() + st.cfg.reminder.everyMs;
       st.stats.wakes++;
@@ -21701,7 +21916,7 @@ class Router {
       }
       while (st.recent.size > MAX_RECENT)
         st.recent.delete(st.recent.keys().next().value);
-      this.#log(`[${handle}] woke ${injector.kind} with ${wake.events.length + marketEvents.length} event(s)` + (limiter === st.directLimiter ? ` past the wake cap; ${stillHeld} still held` : ""));
+      this.#log(`[${handle}] woke ${injector.kind} with ${wake.events.length + marketEvents.length} event(s)` + (lane === "direct" ? ` past the wake cap; ${stillHeld} still held` : ""));
     }
     for (const d of batches.filter((b) => st.handedOff.has(b.delivery_id))) {
       const lane = st.lanes[d.lane];
@@ -21975,6 +22190,15 @@ function showText(agent, s, usage) {
     const held = usage.held ? `, ${usage.held} event${usage.held === 1 ? "" : "s"} held` : "";
     lines.push(`  this hour: wakes ${usage.wakes.used} of ${usage.wakes.limit} used${held}${direct}`);
   }
+  if (s.record_decisions !== undefined) {
+    let on;
+    try {
+      on = recordDecisions(s.record_decisions) ? "on" : "off";
+    } catch (cause) {
+      on = `invalid (${cause instanceof Error ? cause.message : String(cause)})`;
+    }
+    lines.push(`  record_decisions = ${on}    [hand edit, restart] ids, kinds, lane and time only, in recordings/`);
+  }
   if (s.wake_filter !== undefined) {
     let filter;
     try {
@@ -21996,8 +22220,8 @@ function showText(agent, s, usage) {
 }
 
 // src/stop-check.ts
-import { closeSync as closeSync4, constants as constants3, futimesSync as futimesSync2, fstatSync as fstatSync2, lstatSync as lstatSync5, openSync as openSync4, readSync as readSync2 } from "fs";
-import { join as join9 } from "path";
+import { closeSync as closeSync5, constants as constants4, futimesSync as futimesSync2, fstatSync as fstatSync3, lstatSync as lstatSync6, openSync as openSync5, readSync as readSync2 } from "fs";
+import { join as join10 } from "path";
 var BLOCK_REASON = "Your last message asks your owner for a decision, but no owner request was filed this turn. " + "If only your owner can decide it, check list_owner_requests and file it with ask_owner; put several related decisions in one request with questions. " + "Cite the request id in your message. " + "If it is already filed, or your user is here and can answer now, or it was not a decision, say so in one line and stop.";
 var STOP_BLOCK_COOLDOWN_MS = 30 * 60000;
 var MATCH_TAIL_BYTES = 4096;
@@ -22028,7 +22252,7 @@ function asksOwner(message) {
 }
 function mtime2(path) {
   try {
-    const st = lstatSync5(path);
+    const st = lstatSync6(path);
     if (!st.isFile())
       return null;
     if (typeof process.getuid === "function" && st.uid !== process.getuid())
@@ -22039,23 +22263,23 @@ function mtime2(path) {
   }
 }
 function touch(path, at) {
-  const fd = openSync4(path, constants3.O_WRONLY | constants3.O_CREAT | (constants3.O_NOFOLLOW ?? 0), 384);
+  const fd = openSync5(path, constants4.O_WRONLY | constants4.O_CREAT | (constants4.O_NOFOLLOW ?? 0), 384);
   try {
     const t = new Date(at);
     futimesSync2(fd, t, t);
   } finally {
-    closeSync4(fd);
+    closeSync5(fd);
   }
 }
 function readOwnFile(path, max, tail = false) {
   let fd;
   try {
-    fd = openSync4(path, constants3.O_RDONLY | (constants3.O_NOFOLLOW ?? 0) | (constants3.O_NONBLOCK ?? 0));
+    fd = openSync5(path, constants4.O_RDONLY | (constants4.O_NOFOLLOW ?? 0) | (constants4.O_NONBLOCK ?? 0));
   } catch {
     return null;
   }
   try {
-    const st = fstatSync2(fd);
+    const st = fstatSync3(fd);
     if (!st.isFile())
       return null;
     if (typeof process.getuid === "function" && st.uid !== process.getuid())
@@ -22069,13 +22293,13 @@ function readOwnFile(path, max, tail = false) {
   } catch {
     return null;
   } finally {
-    closeSync4(fd);
+    closeSync5(fd);
   }
 }
 function readCanAsk(dir, handle) {
   if (!HANDLE_RE.test(handle))
     return false;
-  const raw = readOwnFile(join9(dir, `caps-${handle}`), MAX_CAPS_BYTES);
+  const raw = readOwnFile(join10(dir, `caps-${handle}`), MAX_CAPS_BYTES);
   if (raw === null)
     return false;
   try {
@@ -22114,7 +22338,7 @@ function stopCheck(input, env) {
     return null;
   if (!readCanAsk(env.dir, env.handle))
     return null;
-  const at = (name) => join9(env.dir, `${name}-${env.handle}`);
+  const at = (name) => join10(env.dir, `${name}-${env.handle}`);
   const lastCheck = mtime2(at("stopcheck"));
   const asked = mtime2(at("asked"));
   touch(at("stopcheck"), env.now);
@@ -22140,7 +22364,7 @@ function noteAsked(input, handle, dir, now) {
     return false;
   if (!Array.isArray(r) && r.isError === true)
     return false;
-  touch(join9(dir, `asked-${handle}`), now);
+  touch(join10(dir, `asked-${handle}`), now);
   return true;
 }
 async function readHookInput(stream = process.stdin) {
@@ -22161,7 +22385,7 @@ async function readHookInput(stream = process.stdin) {
 }
 
 // src/update-notice.ts
-import { closeSync as closeSync5, constants as constants4, fstatSync as fstatSync3, openSync as openSync5, readSync as readSync3 } from "fs";
+import { closeSync as closeSync6, constants as constants5, fstatSync as fstatSync4, openSync as openSync6, readSync as readSync3 } from "fs";
 var VERSION2 = /^\d{1,6}\.\d{1,6}\.\d{1,6}$/;
 var MAX_MANIFEST_BYTES = 1e6;
 var RECHECK_MS = 60000;
@@ -22195,8 +22419,8 @@ function installedVersion(text, key) {
 function readBounded(path) {
   let fd;
   try {
-    fd = openSync5(path, constants4.O_RDONLY | constants4.O_NONBLOCK);
-    const st = fstatSync3(fd);
+    fd = openSync6(path, constants5.O_RDONLY | constants5.O_NONBLOCK);
+    const st = fstatSync4(fd);
     if (!st.isFile() || st.size > MAX_MANIFEST_BYTES)
       return null;
     const size = st.size;
@@ -22207,7 +22431,7 @@ function readBounded(path) {
     return null;
   } finally {
     if (fd !== undefined)
-      closeSync5(fd);
+      closeSync6(fd);
   }
 }
 
@@ -22247,7 +22471,7 @@ class UpdateNotice {
 }
 
 // src/upload.ts
-import { closeSync as closeSync6, constants as constants5, fstatSync as fstatSync4, openSync as openSync6, readlinkSync, readSync as readSync4, realpathSync as realpathSync5 } from "fs";
+import { closeSync as closeSync7, constants as constants6, fstatSync as fstatSync5, openSync as openSync7, readlinkSync, readSync as readSync4, realpathSync as realpathSync5 } from "fs";
 import { sep } from "path";
 var MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 var UPLOAD_TIMEOUT_MS = 60000;
@@ -22273,7 +22497,7 @@ function realHome() {
 function readUploadFile(path) {
   let fd;
   try {
-    fd = openSync6(path, constants5.O_RDONLY | constants5.O_NOFOLLOW | constants5.O_NONBLOCK);
+    fd = openSync7(path, constants6.O_RDONLY | constants6.O_NOFOLLOW | constants6.O_NONBLOCK);
   } catch (cause) {
     const code = cause.code;
     if (code === "ELOOP" || code === "EMLINK")
@@ -22285,7 +22509,7 @@ function readUploadFile(path) {
     throw new LocalRefusal(`can't open ${path} (${code ?? "error"})`);
   }
   try {
-    const st = fstatSync4(fd);
+    const st = fstatSync5(fd);
     if (!st.isFile())
       throw new LocalRefusal("not a regular file: pass a file");
     const real = fdPath(fd, path);
@@ -22306,7 +22530,7 @@ function readUploadFile(path) {
       throw new LocalRefusal("the file changed while it was read; run the command again");
     return { bytes, size: st.size };
   } finally {
-    closeSync6(fd);
+    closeSync7(fd);
   }
 }
 var startsWith = (b, sig, at = 0) => sig.every((v, i) => b[at + i] === v);
@@ -22418,14 +22642,14 @@ async function upload(o) {
 
 // src/setup.ts
 import { spawn as spawn4 } from "child_process";
-import { existsSync as existsSync5, readdirSync as readdirSync2, readFileSync as readFileSync7, unlinkSync as unlinkSync4 } from "fs";
+import { existsSync as existsSync5, readdirSync as readdirSync2, readFileSync as readFileSync8, unlinkSync as unlinkSync4 } from "fs";
 import { userInfo } from "os";
-import { join as join11 } from "path";
+import { join as join12 } from "path";
 
 // src/plugin-sync.ts
 import { spawn as spawn3 } from "child_process";
-import { accessSync, constants as constants6, statSync as statSync4 } from "fs";
-import { delimiter, isAbsolute as isAbsolute4, join as join10 } from "path";
+import { accessSync, constants as constants7, statSync as statSync4 } from "fs";
+import { delimiter, isAbsolute as isAbsolute4, join as join11 } from "path";
 var PLUGIN_ID = "universal-market@tilori-claude";
 var LAUNCHER = "~/.claude/plugins/data/universal-market-tilori-claude/tilori-agent";
 var SYNC_COMMAND = `sh ${LAUNCHER} sync-plugin`;
@@ -22433,11 +22657,11 @@ function claudeBinary(path = process.env.PATH ?? "") {
   for (const dir of path.split(delimiter)) {
     if (!dir || !isAbsolute4(dir))
       continue;
-    const candidate = join10(dir, "claude");
+    const candidate = join11(dir, "claude");
     try {
       const st = statSync4(candidate);
       if (st.isFile()) {
-        accessSync(candidate, constants6.X_OK);
+        accessSync(candidate, constants7.X_OK);
         return candidate;
       }
     } catch {}
@@ -22633,6 +22857,21 @@ function setupOrigin(raw) {
     throw new SetupInputError("--url-origin must use https (http only for a loopback host).");
   return new URL(url.origin);
 }
+function setupClaimOrigin(raw) {
+  const text = raw.trim();
+  let url;
+  try {
+    url = new URL(text);
+  } catch {
+    throw new SetupInputError("--claim-origin must be an https origin such as https://internal.tilori.ai.");
+  }
+  if (url.protocol !== "https:")
+    throw new SetupInputError("--claim-origin must use https.");
+  if (url.username || url.password || url.search || url.hash || text.endsWith("?") || text.endsWith("#") || url.pathname !== "/" && url.pathname !== "") {
+    throw new SetupInputError("--claim-origin must be a bare origin: no path, query, fragment or credentials.");
+  }
+  return new URL(url.origin);
+}
 function allowedUrl(u, origin) {
   if (u.username || u.password)
     return false;
@@ -22641,10 +22880,10 @@ function allowedUrl(u, origin) {
   return u.protocol === "http:" && isLoopback(u) && origin.protocol === "http:" && isLoopback(origin);
 }
 function pendingDir() {
-  return join11(tiloriHome(), "pending");
+  return join12(tiloriHome(), "pending");
 }
 function pendingPath(handle) {
-  return join11(pendingDir(), `${validateHandle(handle)}.json`);
+  return join12(pendingDir(), `${validateHandle(handle)}.json`);
 }
 function writePending(p) {
   ensurePrivateDir(tiloriHome());
@@ -22661,7 +22900,7 @@ function readPending(handle) {
   assertPrivate(path);
   let parsed;
   try {
-    parsed = JSON.parse(readFileSync7(path, "utf8"));
+    parsed = JSON.parse(readFileSync8(path, "utf8"));
   } catch {
     throw new Error(`${path} is not valid JSON; remove it and run setup again.`);
   }
@@ -22792,8 +23031,13 @@ async function register(o) {
   } catch {
     throw unusable("no claim link");
   }
-  if (claim.origin !== o.origin.origin || !allowedUrl(claim, o.origin))
+  if (o.claimOrigin) {
+    if (claim.origin !== o.claimOrigin.origin || claim.protocol !== "https:" || claim.username || claim.password) {
+      throw unusable("the claim link is not on the --claim-origin origin");
+    }
+  } else if (claim.origin !== o.origin.origin || !allowedUrl(claim, o.origin)) {
     throw unusable("the claim link is not on the Tilori origin");
+  }
   let status;
   try {
     status = new URL(typeof j?.status_url === "string" ? j.status_url : STATUS_PATH, o.origin);
@@ -22899,6 +23143,7 @@ function openBrowser(url, log, platform = process.platform) {
 }
 async function runSetup(o) {
   const origin = setupOrigin(o.origin);
+  const claimOrigin = o.claimOrigin === undefined ? undefined : setupClaimOrigin(o.claimOrigin);
   const config = loadConfig();
   let handle;
   let derived = false;
@@ -22922,7 +23167,7 @@ async function runSetup(o) {
   const displayName = o.name === undefined ? handle : setupDisplayName(o.name);
   if (derived)
     o.out(LINES.creating(handle));
-  const { pending, claimUrl } = await register({ ...o, origin, handle, displayName });
+  const { pending, claimUrl } = await register({ ...o, origin, claimOrigin, handle, displayName });
   writePending(pending);
   o.out(LINES.link(handle));
   o.out(claimUrl);
@@ -23110,8 +23355,8 @@ async function awaitAgentKey(o) {
 }
 
 // src/refresh.ts
-import { existsSync as existsSync6, readFileSync as readFileSync8, unlinkSync as unlinkSync5 } from "fs";
-import { join as join12 } from "path";
+import { existsSync as existsSync6, readFileSync as readFileSync9, unlinkSync as unlinkSync5 } from "fs";
+import { join as join13 } from "path";
 var REFRESH_PATH = "/api/v1/agents/refresh";
 var COMPLETE_PATH = "/api/v1/agents/refresh/complete";
 function oldKeyPath(handle) {
@@ -23122,13 +23367,13 @@ function dropStaleBackup(handle) {
   if (!existsSync6(path))
     return false;
   assertPrivate(path);
-  if (readFileSync8(path, "utf8").trim() !== readKey(handle))
+  if (readFileSync9(path, "utf8").trim() !== readKey(handle))
     return false;
   deleteFile(path);
   return true;
 }
 function refreshPath(handle) {
-  return join12(pendingDir(), `${validateHandle(handle)}.refresh.json`);
+  return join13(pendingDir(), `${validateHandle(handle)}.refresh.json`);
 }
 var REFRESH_LINES = {
   noKey: (handle) => `@${handle} has no key here to refresh. Run /universal-market:setup ${handle} to connect it first.`,
@@ -23178,7 +23423,7 @@ function readRefresh(handle) {
   const bad = () => new Error(`${path} is malformed; remove it and run the refresh again.`);
   let j;
   try {
-    j = JSON.parse(readFileSync8(path, "utf8"));
+    j = JSON.parse(readFileSync9(path, "utf8"));
   } catch {
     throw bad();
   }
@@ -23395,8 +23640,8 @@ async function finishRefresh(handle, o) {
 }
 
 // src/connect.ts
-import { existsSync as existsSync7, readdirSync as readdirSync3, renameSync as renameSync3 } from "fs";
-import { join as join13 } from "path";
+import { existsSync as existsSync7, readdirSync as readdirSync3, renameSync as renameSync4 } from "fs";
+import { join as join14 } from "path";
 function shellWord(v) {
   return /^[A-Za-z0-9._~:/%@+=,-]+$/.test(v) ? v : `'${v.replaceAll("'", `'\\''`)}'`;
 }
@@ -23506,11 +23751,11 @@ async function runConnect(o) {
     await m.close();
   }
   if (moving) {
-    const dir = join13(tiloriHome(), "agents");
+    const dir = join14(tiloriHome(), "agents");
     const stamp = new Date(o.now?.() ?? Date.now()).toISOString().replace(/[:.]/g, "-");
     const files = existsSync7(dir) ? readdirSync3(dir).filter((f) => f.endsWith(".key")) : [];
     for (const f of files)
-      renameSync3(join13(dir, f), join13(dir, `${f}.replaced-${stamp}`));
+      renameSync4(join14(dir, f), join14(dir, `${f}.replaced-${stamp}`));
     config.agents = {};
     delete config.default_agent;
   }
@@ -23707,7 +23952,7 @@ async function runNotifyLines(opts) {
 var USAGE = `tilori-agent: wake local coding agents on Tilori events
 
 Usage:
-  tilori-agent setup [<handle>] [--name <display name>] [--url-origin <https-origin>] [--no-browser]
+  tilori-agent setup [<handle>] [--name <display name>] [--url-origin <https-origin>] [--claim-origin <https-origin>] [--no-browser]
       Signs a new agent in without a pasted key: registers it on Tilori
       (https://tilori.ai, or --url-origin), prints the claim link on its own
       line, opens it in the browser, and returns at once. With no handle, one
@@ -23719,6 +23964,12 @@ Usage:
       link or the reuse line, 2 for a bad handle or name, 1 when Tilori
       refused or didn't answer. Nothing from Tilori's answers is printed
       except the claim link.
+      --claim-origin <https-origin>: the claim link must be on exactly that
+      origin (https, no path; no suffix or wildcard match). Use it when the
+      claim page is on another origin than --url-origin, e.g. Internal's
+      --url-origin https://unique-monitor-715.convex.site --claim-origin
+      https://internal.tilori.ai. You type it; without it the link must be
+      on the --url-origin origin.
   tilori-agent setup <handle> --refresh [--no-browser]
       Replaces the agent's key with a new one its owner approves, for a key
       made before a permission the agent now needs. Sends the current key
@@ -23911,6 +24162,7 @@ function parseArgs(argv) {
     "bytes",
     "home",
     "url-origin",
+    "claim-origin",
     "name",
     "out",
     "defaults",
@@ -24021,7 +24273,7 @@ async function readSecretFromStdin(prompt) {
   });
 }
 function agentsWithKeys() {
-  const dir = join14(tiloriHome(), "agents");
+  const dir = join15(tiloriHome(), "agents");
   if (!existsSync8(dir))
     return [];
   return readdirSync4(dir).filter((f) => f.endsWith(".key")).map((f) => f.slice(0, -4)).filter((h) => {
@@ -24060,7 +24312,7 @@ async function launchClaude(args) {
     if (a === "--settings" || a.startsWith("--settings="))
       throw new Error("claude sets Claude Code's --settings itself; pass other settings in a settings file instead.");
   const home = allowedHome(dir);
-  const config = loadConfig(join14(home, "config.json"));
+  const config = loadConfig(join15(home, "config.json"));
   const env = { TILORI_HOME: home, TILORI_MCP_URL: buildMcpUrl(config.url).toString() };
   if (config.market_url)
     env.TILORI_MARKET_URL = buildMarketUrl(config.market_url).toString();
@@ -24227,6 +24479,7 @@ async function main(argv = process.argv.slice(2)) {
             handle: args.positionals[0],
             name: str(args, "name"),
             origin: str(args, "url-origin"),
+            claimOrigin: str(args, "claim-origin"),
             noBrowser: args.flags.has("no-browser"),
             signal,
             out,
@@ -24362,7 +24615,7 @@ async function main(argv = process.argv.slice(2)) {
         const readJson = (path, name) => {
           let text;
           try {
-            text = readFileSync9(path, "utf8");
+            text = readFileSync10(path, "utf8");
           } catch {
             throw new Error(`pr-work ${subcommand}: could not read ${name} file ${path}.`);
           }
@@ -24669,11 +24922,13 @@ async function main(argv = process.argv.slice(2)) {
               stallMinutes: stallMinutes(settings.stall_minutes),
               ...pushEnabled(settings) ? { push: { endpoint: url, apiKey, rereadKey } } : {},
               market: marketLane(config, agent, apiKey, rereadKey, log),
-              ...wakeFilterConfig(config, agent)
+              ...wakeFilterConfig(config, agent),
+              ...recorderConfig(config, agent)
             }
           ],
           logger: log,
           signalDir: signalDir(log),
+          recordingsDir: join15(tiloriHome(), "recordings"),
           waitMs
         });
         const t = str(args, "exec-timeout-ms") ?? settings.exec_timeout_ms;
@@ -24687,7 +24942,7 @@ async function main(argv = process.argv.slice(2)) {
         const url = keyUrl(config, str(args, "url"));
         const handles = agentsWithKeys();
         if (!handles.length)
-          throw new Error(`No agent keys in ${join14(tiloriHome(), "agents")}. Run tilori-agent init first.`);
+          throw new Error(`No agent keys in ${join15(tiloriHome(), "agents")}. Run tilori-agent init first.`);
         const agents = handles.map((handle) => {
           const s = config.agents?.[handle] ?? {};
           const apiKey = readKey(handle);
@@ -24698,6 +24953,7 @@ async function main(argv = process.argv.slice(2)) {
             ...pushEnabled(s) ? { push: { endpoint: url, apiKey, rereadKey } } : {},
             market: marketLane(config, handle, apiKey, rereadKey, log),
             ...wakeFilterConfig(config, handle),
+            ...recorderConfig(config, handle),
             subscriptions: desiredSubscriptions(s),
             wakesPerHour: s.wakes_per_hour,
             directWakesPerHour: s.direct_wakes_per_hour,
@@ -24707,7 +24963,7 @@ async function main(argv = process.argv.slice(2)) {
             stallMinutes: stallMinutes(s.stall_minutes)
           };
         });
-        const router = new Router({ agents, logger: log, signalDir: activityDir() });
+        const router = new Router({ agents, logger: log, signalDir: activityDir(), recordingsDir: join15(tiloriHome(), "recordings") });
         for (const handle of handles) {
           const s = config.agents?.[handle];
           if (s?.injector === "exec" && s.exec) {
@@ -24777,7 +25033,7 @@ ${rules}` : "");
         if (!handles.length) {
           if (pending.length)
             return 0;
-          console.log(`No agents on this machine yet: no keys in ${join14(tiloriHome(), "agents")}. ` + "Run tilori-agent setup [<handle>] to create and connect one, or tilori-agent init --agent <handle> --url <tilori-mcp-url> for an existing key");
+          console.log(`No agents on this machine yet: no keys in ${join15(tiloriHome(), "agents")}. ` + "Run tilori-agent setup [<handle>] to create and connect one, or tilori-agent init --agent <handle> --url <tilori-mcp-url> for an existing key");
           return 0;
         }
         if (serverLine)
