@@ -7275,7 +7275,7 @@ import { existsSync as existsSync2, readdirSync, readFileSync as readFileSync3 }
 import { dirname as dirname3, join as join4 } from "path";
 
 // src/version.ts
-var VERSION = "0.3.12";
+var VERSION = "0.3.13";
 
 // src/wake-filter.ts
 import { spawn } from "child_process";
@@ -8748,6 +8748,47 @@ function writeCapsSignal(dir, handle, askOwner) {
     writeSync(fd, JSON.stringify({ ask_owner: askOwner }));
   } finally {
     closeSync2(fd);
+  }
+}
+var SCOPE_RE = /^[a-z_]{1,32}$/;
+var CODE_RE = /^[A-Z][A-Z0-9_]{0,63}$/;
+function writeSubsSignal(dir, handle, entries) {
+  const path = join6(dir, `subs-${validateHandle(handle)}`);
+  const fd = openSync2(path, constants2.O_WRONLY | constants2.O_CREAT | constants2.O_TRUNC | (constants2.O_NOFOLLOW ?? 0), 384);
+  try {
+    writeSync(fd, JSON.stringify({ entries }));
+  } finally {
+    closeSync2(fd);
+  }
+}
+function readSubsSignal(handle, dir = activityDir()) {
+  if (!HANDLE_RE.test(handle))
+    return null;
+  const path = join6(dir, `subs-${handle}`);
+  try {
+    const st = lstatSync3(path);
+    if (!st.isFile() || st.size > 4096)
+      return null;
+    if (typeof process.getuid === "function" && st.uid !== process.getuid())
+      return null;
+    const raw = JSON.parse(readFileSync4(path, "utf8"));
+    if (!Array.isArray(raw?.entries))
+      return null;
+    const entries = [];
+    for (const e of raw.entries.slice(0, 32)) {
+      if (typeof e?.scope !== "string" || !SCOPE_RE.test(e.scope))
+        continue;
+      if (e.state !== "active" && e.state !== "refused" && e.state !== "failed")
+        continue;
+      entries.push({
+        scope: e.scope,
+        state: e.state,
+        ...typeof e.code === "string" && CODE_RE.test(e.code) ? { code: e.code } : {}
+      });
+    }
+    return { entries, at: st.mtimeMs };
+  } catch {
+    return null;
   }
 }
 var PUSH_STATES = new Set(["connecting", "live", "reconnecting", "down", "refused"]);
@@ -19235,7 +19276,7 @@ class TiloriAgentClient {
         out.push(await this.subscribe(spec, options.signal));
       } catch (cause) {
         const clean = this.#clean(cause);
-        options.skipped?.(cause instanceof ToolRefused ? cause : clean);
+        options.skipped?.(cause instanceof ToolRefused ? cause : clean, spec);
         (options.log ?? this.log)(`Skipping ${spec.scope.type} subscription: ${clean.message}`);
       }
     }
@@ -20413,6 +20454,26 @@ class Router {
       this.#log(`[${handle}] could not update caps- in the run directory: ${errText(cause)}`);
     }
   }
+  #subsStatus(handle, wanted, subs, outcomes) {
+    if (this.#signalDir === undefined)
+      return;
+    const entries = [];
+    for (const scope of new Set(wanted)) {
+      if (subs.some((s) => s.scope.type === scope))
+        entries.push({ scope, state: "active" });
+      else
+        entries.push(outcomes.get(scope) ?? { scope, state: "failed" });
+    }
+    try {
+      writeSubsSignal(this.#signalDir, handle, entries);
+    } catch (cause) {
+      const key = `subs-${handle}`;
+      if (this.#signalFailed.has(key))
+        return;
+      this.#signalFailed.add(key);
+      this.#log(`[${handle}] could not update subs- in the run directory: ${errText(cause)}`);
+    }
+  }
   #pushStatus(handle, s) {
     if (this.#signalDir === undefined)
       return;
@@ -20663,6 +20724,7 @@ class Router {
     while (!signal.aborted) {
       let subs;
       let skipped = null;
+      const outcomes = new Map;
       const now = Date.now();
       for (const [key, at] of lane.resubscribed)
         if (now - at > this.#renewEveryMs)
@@ -20677,9 +20739,19 @@ class Router {
           signal,
           renewIds: lane.renewIds,
           log: tilori ? (m) => this.#log(`[${handle}] ${m}`) : () => {},
-          skipped: (cause) => skipped = cause
+          skipped: (cause, spec) => {
+            skipped = cause;
+            const code = cause instanceof ToolRefused ? cause.code : undefined;
+            outcomes.set(spec.scope.type, {
+              scope: spec.scope.type,
+              state: cause instanceof ToolRefused ? "refused" : "failed",
+              ...code ? { code } : {}
+            });
+          }
         });
         lane.renewIds.clear();
+        if (tilori)
+          this.#subsStatus(handle, lane.subscriptions.map((s) => s.scope.type), subs, outcomes);
         failures = 0;
       } catch (cause) {
         if (signal.aborted)
@@ -22522,7 +22594,7 @@ class SetupInputError extends Error {
 var SETUP_HANDLE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 var HANDLE_RULE = "Agent handles are 2-24 characters: a-z, 0-9 and single hyphens, starting and ending with a letter or digit.";
 var USERNAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-var CODE_RE = /^[A-Z][A-Z0-9_]{0,63}$/;
+var CODE_RE2 = /^[A-Z][A-Z0-9_]{0,63}$/;
 var CONTROL = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
 function setupHandle(raw) {
   const h = raw.replace(/^ +| +$/g, "").replace(/[A-Z]/g, (c) => c.toLowerCase());
@@ -22669,7 +22741,7 @@ async function request(url, init, o) {
 function errorCode(json) {
   const j = json;
   const code = j?.error?.code ?? j?.code;
-  return typeof code === "string" && CODE_RE.test(code) ? ` ${code}` : "";
+  return typeof code === "string" && CODE_RE2.test(code) ? ` ${code}` : "";
 }
 function registerRefusal(status, code = "") {
   if (status === 400)
@@ -24722,6 +24794,24 @@ ${rules}` : "");
             stallMinutes: stall,
             push: readPushSignal(handle)
           }));
+          const subs = readSubsSignal(handle);
+          const setting = agents?.[handle];
+          const off = new Set;
+          if (setting?.inbox === false)
+            off.add("inbox");
+          if (setting?.direct_messages === false)
+            off.add("direct_messages");
+          const shown = new Set;
+          for (const e of subs?.entries ?? []) {
+            shown.add(e.scope);
+            const what = off.has(e.scope) ? "off by config" : e.state === "active" ? "active" : e.state === "refused" ? `refused${e.code ? ` (${e.code})` : ""}` : "not set up (setup failed)";
+            console.log(`  subscription ${e.scope}: ${what}`);
+          }
+          for (const scope of off)
+            if (!shown.has(scope))
+              console.log(`  subscription ${scope}: off by config`);
+          if (!subs && !off.size)
+            console.log("  subscriptions: not reported (no router running, or an older one)");
           let broad = null;
           try {
             broad = unfilteredPostsWarning(handle, desiredSubscriptions(agents?.[handle]));
