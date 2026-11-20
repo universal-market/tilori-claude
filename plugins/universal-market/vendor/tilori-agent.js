@@ -7085,8 +7085,8 @@ function checkRules(env) {
 
 // src/cli.ts
 import { spawn as spawn5 } from "child_process";
-import { existsSync as existsSync8, readdirSync as readdirSync4, statSync as statSync5 } from "fs";
-import { isAbsolute as isAbsolute5, join as join13 } from "path";
+import { existsSync as existsSync8, readFileSync as readFileSync9, readdirSync as readdirSync4, statSync as statSync5 } from "fs";
+import { isAbsolute as isAbsolute5, join as join14 } from "path";
 
 // src/activity.ts
 import { closeSync as closeSync2, constants as constants2, futimesSync, lstatSync as lstatSync3, openSync as openSync2, readFileSync as readFileSync4, writeSync } from "fs";
@@ -7275,7 +7275,7 @@ import { existsSync as existsSync2, readdirSync, readFileSync as readFileSync3 }
 import { dirname as dirname3, join as join4 } from "path";
 
 // src/version.ts
-var VERSION = "0.3.11";
+var VERSION = "0.3.12";
 
 // src/wake-filter.ts
 import { spawn } from "child_process";
@@ -8656,8 +8656,11 @@ function attachToRouter(agent, injector, path = socketPath(), onRegistered = () 
         sock.end();
       } else if (msg?.op === "wake" && registered) {
         const wake = sanitizeWake(msg, handle);
-        if (!wake)
+        if (!wake) {
+          if (typeof msg.wake_id === "string" && msg.wake_id.length <= 64)
+            send(sock, { op: "busy", wake_id: msg.wake_id });
           return;
+        }
         const result = await injector.deliver(wake);
         send(sock, { op: result === "accepted" ? "accepted" : "busy", wake_id: wake.wake_id });
         if (result === "gone")
@@ -19334,6 +19337,321 @@ function writeAtomically(target, body) {
   }
 }
 
+// src/pr-work-open.ts
+import { readFileSync as readFileSync5 } from "fs";
+var UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+function buildPrWorkOpen(options) {
+  if (!UUID.test(options.building))
+    throw new Error("pr-work open: --building must be a UUID.");
+  if (!UUID.test(options.txn))
+    throw new Error("pr-work open: --txn must be a UUID.");
+  const buildingLine = `Building: ${options.building}`;
+  const marketLine = `Market: ${options.txn}`;
+  const header = `${buildingLine}
+${marketLine}
+`;
+  if (options.bodyPath === undefined)
+    return { header };
+  let raw;
+  try {
+    raw = readFileSync5(options.bodyPath, "utf8");
+  } catch {
+    throw new Error(`pr-work open: could not read body file ${options.bodyPath}.`);
+  }
+  const lines = raw.split(`
+`).map((line) => line.endsWith("\r") ? line.slice(0, -1) : line);
+  let marketCount = 0;
+  for (const line of lines) {
+    if (!line.startsWith("Market:"))
+      continue;
+    if (line !== marketLine)
+      throw new Error("pr-work open: body already has a different Market: line.");
+    marketCount++;
+  }
+  if (marketCount > 1)
+    throw new Error("pr-work open: body has more than one Market: line.");
+  if (lines.length > 0 && lines[0].startsWith("Building:") && lines[0] !== buildingLine)
+    throw new Error("pr-work open: body starts with a different Building: line.");
+  const remaining = lines.filter((line) => line !== buildingLine && line !== marketLine);
+  while (remaining.length > 0 && remaining[0] === "")
+    remaining.shift();
+  const body = remaining.length > 0 ? `${header}
+${remaining.join(`
+`)}` : header;
+  return { header, body };
+}
+function buildPrWorkTake(options) {
+  if (options.role !== "implementer" && options.role !== "reviewer")
+    throw new Error("pr-work take: --role must be implementer or reviewer.");
+  if (!UUID.test(options.listing))
+    throw new Error("pr-work take: --listing must be a UUID.");
+  if (options.txn !== undefined && !UUID.test(options.txn))
+    throw new Error("pr-work take: --txn must be a UUID.");
+  const firstStep = options.txn !== undefined ? { tool: "join_transaction", args: { transaction_id: options.txn } } : { tool: "respond_to_listing", args: { listing_id: options.listing } };
+  return {
+    role: options.role,
+    steps: [
+      firstStep,
+      { tool: "tilori.create_post", note: "post the full transaction id in the review thread" },
+      { tool: "accept_contract", note: "after the proposer posts the contract id" }
+    ]
+  };
+}
+
+// src/pr-work.ts
+import { readFileSync as readFileSync6 } from "fs";
+import { join as join8 } from "path";
+
+// src/pr-work-select.ts
+var REVIEW_KINDS = ["code", "security", "docs"];
+var RULE_ORDER = ["implementer", "client", "other_reviewer", "same_owner"];
+var KNOWN = new Set(REVIEW_KINDS);
+var isKnownKind = (kind) => KNOWN.has(kind);
+var hasIdentity = (value) => !!value && typeof value.agent === "string" && !!value.agent && typeof value.owner === "string" && !!value.owner;
+function selectReviewers(input) {
+  const kinds = Array.isArray(input.kinds) ? input.kinds : [];
+  if (kinds.length === 0)
+    return { ok: false, rule: "no_list", kind: "", detail: "no kinds" };
+  const lists = input.lists ?? {};
+  const picks = [];
+  const picked = new Set;
+  for (const kind of kinds) {
+    if (!isKnownKind(kind))
+      return { ok: false, rule: "not_listed", kind: String(kind), detail: `unknown kind "${String(kind)}"` };
+    const actors = [
+      ["implementer", input.implementer],
+      ["client", input.client],
+      ["opener", input.opener]
+    ];
+    for (const [role, actor] of actors)
+      if ((role !== "opener" || actor !== undefined) && !hasIdentity(actor))
+        return { ok: false, rule: "not_listed", kind, detail: `${kind}: ${role} has an empty agent or owner` };
+    const candidates = lists[kind];
+    if (!Array.isArray(candidates) || candidates.length === 0)
+      return { ok: false, rule: "no_list", kind, detail: `no reviewer list for ${kind}` };
+    for (const candidate of candidates)
+      if (!hasIdentity(candidate))
+        return { ok: false, rule: "not_listed", kind, detail: `${kind}: candidate has an empty agent or owner` };
+    let pick;
+    const handles = {
+      implementer: [],
+      client: [],
+      other_reviewer: [],
+      same_owner: []
+    };
+    for (const candidate of candidates) {
+      if (candidate.agent === input.implementer.agent) {
+        handles.implementer.push(candidate?.handle ?? "");
+        continue;
+      }
+      if (input.opener && candidate.agent === input.opener.agent) {
+        handles.implementer.push(candidate.handle);
+        continue;
+      }
+      if (candidate.agent === input.client.agent) {
+        handles.client.push(candidate.handle);
+        continue;
+      }
+      if (picked.has(candidate.agent)) {
+        handles.other_reviewer.push(candidate.handle);
+        continue;
+      }
+      if (candidate.owner === input.implementer.owner) {
+        handles.same_owner.push(candidate.handle);
+        continue;
+      }
+      pick = candidate;
+      break;
+    }
+    if (!pick) {
+      let rule = RULE_ORDER[0];
+      let most = -1;
+      for (const name of RULE_ORDER) {
+        const count = handles[name].length;
+        if (count > most) {
+          most = count;
+          rule = name;
+        }
+      }
+      const detail = RULE_ORDER.map((name) => `${name}: ${handles[name].length ? handles[name].join(", ") : "-"}`).join("; ");
+      return { ok: false, rule, kind, detail: `${kind}: ${detail}` };
+    }
+    picks.push({ kind, agent: pick });
+    picked.add(pick.agent);
+  }
+  return { ok: true, picks };
+}
+
+// src/pr-work.ts
+var WORKFLOWS_GLOB = ".github/workflows/**";
+var REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+var DEFAULT_ACCEPTANCE = "All required CI passes at the reviewed head and every linked review approves it.";
+var UUID2 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function isRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function stringArray(value, name, repo) {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string"))
+    throw new Error(`pr-work listing: "${name}" must be an array of strings for ${repo}.`);
+  return value;
+}
+function checkListLimits(items, name) {
+  if (items.length > 16)
+    throw new Error(`pr-work listing: ${name} has more than 16 items.`);
+  if (items.some((item) => Buffer.byteLength(item, "utf8") > 256))
+    throw new Error(`pr-work listing: ${name} items must be at most 256 UTF-8 bytes.`);
+}
+function parseAgent(value) {
+  const handle = isRecord(value) && typeof value.handle === "string" && value.handle ? value.handle : "?";
+  if (!isRecord(value) || typeof value.agent !== "string" || !value.agent || typeof value.handle !== "string" || !value.handle || typeof value.owner !== "string" || !value.owner)
+    throw new Error(`pr-work listing: agent "${handle}" needs a non-empty agent, handle and owner`);
+  return { agent: value.agent, handle: value.handle, owner: value.owner };
+}
+function parseAgents(value) {
+  if (!isRecord(value))
+    throw new Error("pr-work listing: agents must be a JSON object.");
+  if (value.client === undefined || value.implementer === undefined)
+    throw new Error("pr-work listing: agents needs client and implementer.");
+  if (!isRecord(value.lists))
+    throw new Error("pr-work listing: lists must be an object whose values are arrays of agents.");
+  const lists = {};
+  for (const [kind, candidates] of Object.entries(value.lists)) {
+    if (!Array.isArray(candidates))
+      throw new Error("pr-work listing: lists must be an object whose values are arrays of agents.");
+    lists[kind] = candidates.map(parseAgent);
+  }
+  return {
+    client: parseAgent(value.client),
+    implementer: parseAgent(value.implementer),
+    ...value.opener === undefined ? {} : { opener: parseAgent(value.opener) },
+    lists
+  };
+}
+function buildPrWorkListing(options) {
+  if (!REPO.test(options.repo))
+    throw new Error("pr-work listing: --repo must match owner/repo.");
+  if (!/^[1-9][0-9]*$/.test(options.pr) || !Number.isSafeInteger(Number(options.pr)))
+    throw new Error("pr-work listing: --pr must be a positive integer.");
+  const path = options.defaultsPath ?? join8(options.repoDir ?? process.cwd(), "scripts", "merge-check-defaults.json");
+  let text;
+  try {
+    text = readFileSync6(path, "utf8");
+  } catch {
+    throw new Error(`pr-work listing: could not read defaults file ${path}.`);
+  }
+  let defaults;
+  try {
+    defaults = JSON.parse(text);
+  } catch {
+    throw new Error(`pr-work listing: defaults file is not valid JSON: ${path}.`);
+  }
+  const entry = isRecord(defaults) ? defaults[options.repo] : undefined;
+  if (!isRecord(entry))
+    throw new Error(`pr-work listing: no defaults entry for ${options.repo} in ${path}.`);
+  const workflows = stringArray(entry.workflows, "workflows", options.repo);
+  const protectedPaths = stringArray(entry.protected_paths, "protected_paths", options.repo);
+  if (entry.base !== undefined && (typeof entry.base !== "string" || !entry.base))
+    throw new Error(`pr-work listing: "base" must be a non-empty string for ${options.repo}.`);
+  const base = typeof entry.base === "string" ? entry.base : "main";
+  const confirmPaths = [...new Set([WORKFLOWS_GLOB, ...protectedPaths])];
+  checkListLimits(workflows, "required_ci");
+  checkListLimits(confirmPaths, "confirm_paths");
+  const acceptance = options.acceptance ?? DEFAULT_ACCEPTANCE;
+  if (Buffer.byteLength(acceptance, "utf8") > 4096)
+    throw new Error("pr-work listing: acceptance must be at most 4096 UTF-8 bytes.");
+  const kinds = options.docsOnly ? ["docs"] : ["code", "security"];
+  const { client, implementer, opener, lists } = options.agents;
+  const selected = selectReviewers({ kinds, implementer, client, opener, lists });
+  if (!selected.ok)
+    throw new Error(`pr-work listing: no reviewer for ${selected.kind}: ${selected.rule}: ${selected.detail}`);
+  const kindInputs = Object.fromEntries(kinds.map((kind, index) => [`kind_${index + 1}`, kind]));
+  return {
+    listing: {
+      kind: "request",
+      title: `PR work: ${options.repo}#${options.pr}`,
+      description: `Review of ${options.repo}#${options.pr} under the pinned pr-work terms.`,
+      contract_template_id: `universal-market/pr-work-r${kinds.length}`,
+      contract_template_version: "2.0.0",
+      contract_inputs: {
+        client: { principal: `um:agent:${client.agent}` },
+        repo: options.repo,
+        acceptance,
+        base,
+        ...kindInputs,
+        required_ci: workflows,
+        confirm_paths: confirmPaths,
+        objections: "block",
+        publish_terms: true,
+        review_owner: "client"
+      }
+    },
+    reviewers: selected.picks.map((pick) => ({ kind: pick.kind, agent: pick.agent.agent, handle: pick.agent.handle }))
+  };
+}
+function parseTxs(value, kinds) {
+  if (!isRecord(value))
+    throw new Error("pr-work propose: txs must be a JSON object.");
+  const expected = new Set(kinds);
+  for (const kind of kinds)
+    if (!Object.hasOwn(value, kind))
+      throw new Error(`pr-work propose: txs is missing the "${kind}" transaction.`);
+  for (const kind of Object.keys(value))
+    if (!expected.has(kind))
+      throw new Error(`pr-work propose: txs has an unexpected "${kind}" entry.`);
+  for (const kind of kinds) {
+    const transaction = value[kind];
+    if (typeof transaction !== "string" || !UUID2.test(transaction))
+      throw new Error(`pr-work propose: txs entry for "${kind}" must be a transaction UUID.`);
+  }
+  const seen = new Set;
+  for (const kind of kinds) {
+    const id = value[kind].toLowerCase();
+    if (seen.has(id))
+      throw new Error(`pr-work propose: txs entry for "${kind}" repeats another kind's transaction.`);
+    seen.add(id);
+  }
+  return Object.fromEntries(kinds.map((kind) => [kind, value[kind]]));
+}
+function buildPrWorkProposal(options) {
+  const { listing, reviewers } = buildPrWorkListing(options);
+  const { client, implementer } = options.agents;
+  const principal = (agent) => ({ principal: `um:agent:${agent}` });
+  const reviews = reviewers.map(({ kind, agent, handle }) => ({
+    kind,
+    reviewer: { agent, handle },
+    proposal: {
+      contract_template_id: "universal-market/pr-review",
+      contract_template_version: "1.0.0",
+      contract_inputs: {
+        client: principal(client.agent),
+        implementer: principal(implementer.agent),
+        reviewer: principal(agent),
+        repo: listing.contract_inputs.repo,
+        kind,
+        acceptance: listing.contract_inputs.acceptance,
+        publish_terms: true
+      }
+    }
+  }));
+  if (options.txs === undefined)
+    return { reviews, parent: null };
+  const kinds = reviewers.map((reviewer) => reviewer.kind);
+  const txs = parseTxs(options.txs, kinds);
+  const reviewTransactions = Object.fromEntries(kinds.map((kind, index) => [`review_tx_${index + 1}`, { transaction: txs[kind] }]));
+  return {
+    reviews,
+    parent: {
+      contract_template_id: listing.contract_template_id,
+      contract_template_version: "2.0.0",
+      contract_inputs: {
+        ...listing.contract_inputs,
+        implementer: principal(implementer.agent),
+        ...reviewTransactions
+      }
+    }
+  };
+}
+
 // src/injectors/exec.ts
 import { spawn as spawn2 } from "child_process";
 class ExecInjector {
@@ -19846,7 +20164,15 @@ function newLane(name, client, subscriptions) {
 var MAX_DAY_IDS = 50;
 var newFilterDay = () => ({ day: new Date().toISOString().slice(0, 10), woke: 0, held: 0, dropped: 0, failed: 0, dropped_ids: [] });
 var DIRECT_SCOPES = new Set(["inbox", "mentions", "direct_messages"]);
+var DM_KINDS = new Set(["dm.request", "dm.message", "dm.accepted"]);
 var isDirectKind = (kind) => kind === "mention" || kind.startsWith("dm.");
+function dmNote(ds) {
+  const dms = ds.flatMap((d) => d.events).filter((e) => e.kind.startsWith("dm."));
+  if (!dms.length)
+    return "";
+  const shown = dms.slice(0, 5).map((e) => `${DM_KINDS.has(e.kind) ? e.kind : "dm.other"} ${isUuid(e.entity_id) ? e.entity_id : "invalid-id"}`).join(", ");
+  return ` [dm ${shown}${dms.length > 5 ? `, +${dms.length - 5} more` : ""}]`;
+}
 function directLimiter(perHour, now) {
   const n = perHour ?? DEFAULT_DIRECT_WAKES_PER_HOUR;
   if (n === 0)
@@ -19912,6 +20238,7 @@ class Router {
   #random;
   #pollers = new Set;
   #retryMs;
+  #slowDeliverMs;
   #renewEveryMs;
   #coalesceMs;
   #plainHoldMs;
@@ -19932,6 +20259,7 @@ class Router {
     this.#fallbackMax = options.pushFallbackMax ?? PUSH_FALLBACK_MAX;
     this.#random = options.random ?? Math.random;
     this.#retryMs = options.retryMs ?? 2000;
+    this.#slowDeliverMs = options.slowDeliverMs ?? 30000;
     this.#renewEveryMs = options.renewEveryMs ?? 6 * 3600000;
     this.#coalesceMs = options.coalesceMs ?? 3000;
     this.#plainHoldMs = Math.max(this.#coalesceMs, options.plainHoldMs ?? 30000);
@@ -21202,7 +21530,7 @@ class Router {
       }
       const injector = st.injectors.at(-1);
       if (!injector) {
-        notice(`holding ${count} event(s): no injector registered for this agent yet`);
+        notice(`holding ${count} event(s): no injector registered for this agent yet${dmNote(fresh)}`);
         return this.#retryMs * 5;
       }
       let send = fresh;
@@ -21216,7 +21544,7 @@ class Router {
             st.capHeld.add(d.delivery_id);
         if (directWait > 0) {
           st.stats.delayed = count;
-          notice(`wake cap reached (${st.limiter.perHour}/hour); delaying ${count} event(s) for ${Math.ceil(Math.min(capWait, directWait) / 1000)} s`);
+          notice(`wake cap reached (${st.limiter.perHour}/hour); delaying ${count} event(s) for ${Math.ceil(Math.min(capWait, directWait) / 1000)} s${dmNote(fresh)}`);
           return Math.min(capWait, directWait, 60000);
         }
         send = direct;
@@ -21244,21 +21572,26 @@ class Router {
         wake.still_held = stillHeld;
       this.#noteLastWake(st, wake, limiter);
       await this.#noteProfile(st, wake, signal);
-      const result = await settle2(injector.deliver(wake));
+      const slow = setTimeout(() => this.#log(`[${handle}] injector ${injector.kind} has not accepted the wake after ${Math.round(this.#slowDeliverMs / 1000)} s; ${count} event(s) stay unacked${dmNote(send)}`), this.#slowDeliverMs);
+      slow.unref?.();
+      const result = await settle2(new Promise((r) => r(injector.deliver(wake)))).finally(() => clearTimeout(slow));
       if (result === "gone") {
         this.#drop(st, injector);
-        notice(`injector ${injector.kind} gone; ${st.injectors.length} left; holding ${count} event(s)`);
+        notice(`injector ${injector.kind} gone; ${st.injectors.length} left; holding ${count} event(s)${dmNote(send)}`);
         return st.injectors.length ? 1 : this.#retryMs;
       }
       if (result !== "accepted") {
         st.busy++;
         const backoff = Math.min(60000, this.#retryMs * 2 ** (st.busy - 1));
         st.retryAt = Date.now() + backoff;
-        notice(`injector ${injector.kind} busy (x${st.busy}); holding ${count} event(s), retry in ${backoff} ms`);
+        notice(`injector ${injector.kind} busy (x${st.busy}); holding ${count} event(s), retry in ${backoff} ms${dmNote(send)}`);
         return backoff;
       }
       st.busy = 0;
       st.retryAt = 0;
+      const delivered = dmNote(send);
+      if (delivered)
+        this.#log(`[${handle}] delivered wake to ${injector.kind}${delivered}`);
       if (send.some((d) => d.lane === "tilori" && !st.directSubs.has(d.subscription_id)))
         st.plainWokeAt = Date.now();
       this.#signal(handle, "woke");
@@ -21592,7 +21925,7 @@ function showText(agent, s, usage) {
 
 // src/stop-check.ts
 import { closeSync as closeSync4, constants as constants3, futimesSync as futimesSync2, fstatSync as fstatSync2, lstatSync as lstatSync5, openSync as openSync4, readSync as readSync2 } from "fs";
-import { join as join8 } from "path";
+import { join as join9 } from "path";
 var BLOCK_REASON = "Your last message asks your owner for a decision, but no owner request was filed this turn. " + "If only your owner can decide it, check list_owner_requests and file it with ask_owner; put several related decisions in one request with questions. " + "Cite the request id in your message. " + "If it is already filed, or your user is here and can answer now, or it was not a decision, say so in one line and stop.";
 var STOP_BLOCK_COOLDOWN_MS = 30 * 60000;
 var MATCH_TAIL_BYTES = 4096;
@@ -21670,7 +22003,7 @@ function readOwnFile(path, max, tail = false) {
 function readCanAsk(dir, handle) {
   if (!HANDLE_RE.test(handle))
     return false;
-  const raw = readOwnFile(join8(dir, `caps-${handle}`), MAX_CAPS_BYTES);
+  const raw = readOwnFile(join9(dir, `caps-${handle}`), MAX_CAPS_BYTES);
   if (raw === null)
     return false;
   try {
@@ -21709,7 +22042,7 @@ function stopCheck(input, env) {
     return null;
   if (!readCanAsk(env.dir, env.handle))
     return null;
-  const at = (name) => join8(env.dir, `${name}-${env.handle}`);
+  const at = (name) => join9(env.dir, `${name}-${env.handle}`);
   const lastCheck = mtime2(at("stopcheck"));
   const asked = mtime2(at("asked"));
   touch(at("stopcheck"), env.now);
@@ -21735,7 +22068,7 @@ function noteAsked(input, handle, dir, now) {
     return false;
   if (!Array.isArray(r) && r.isError === true)
     return false;
-  touch(join8(dir, `asked-${handle}`), now);
+  touch(join9(dir, `asked-${handle}`), now);
   return true;
 }
 async function readHookInput(stream = process.stdin) {
@@ -21846,7 +22179,7 @@ import { closeSync as closeSync6, constants as constants5, fstatSync as fstatSyn
 import { sep } from "path";
 var MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 var UPLOAD_TIMEOUT_MS = 60000;
-var UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+var UUID3 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 class LocalRefusal extends Error {
 }
@@ -21933,7 +22266,7 @@ function parseBytes(raw) {
   return Number(raw);
 }
 function uploadTarget(origin, id) {
-  if (!UUID.test(id))
+  if (!UUID3.test(id))
     throw new LocalRefusal("attachment_id must be the UUID that prepare_attachment_upload returned");
   return new URL(`/api/v1/attachments/uploads/${id}`, origin);
 }
@@ -22013,14 +22346,14 @@ async function upload(o) {
 
 // src/setup.ts
 import { spawn as spawn4 } from "child_process";
-import { existsSync as existsSync5, readdirSync as readdirSync2, readFileSync as readFileSync5, unlinkSync as unlinkSync4 } from "fs";
+import { existsSync as existsSync5, readdirSync as readdirSync2, readFileSync as readFileSync7, unlinkSync as unlinkSync4 } from "fs";
 import { userInfo } from "os";
-import { join as join10 } from "path";
+import { join as join11 } from "path";
 
 // src/plugin-sync.ts
 import { spawn as spawn3 } from "child_process";
 import { accessSync, constants as constants6, statSync as statSync4 } from "fs";
-import { delimiter, isAbsolute as isAbsolute4, join as join9 } from "path";
+import { delimiter, isAbsolute as isAbsolute4, join as join10 } from "path";
 var PLUGIN_ID = "universal-market@tilori-claude";
 var LAUNCHER = "~/.claude/plugins/data/universal-market-tilori-claude/tilori-agent";
 var SYNC_COMMAND = `sh ${LAUNCHER} sync-plugin`;
@@ -22028,7 +22361,7 @@ function claudeBinary(path = process.env.PATH ?? "") {
   for (const dir of path.split(delimiter)) {
     if (!dir || !isAbsolute4(dir))
       continue;
-    const candidate = join9(dir, "claude");
+    const candidate = join10(dir, "claude");
     try {
       const st = statSync4(candidate);
       if (st.isFile()) {
@@ -22236,10 +22569,10 @@ function allowedUrl(u, origin) {
   return u.protocol === "http:" && isLoopback(u) && origin.protocol === "http:" && isLoopback(origin);
 }
 function pendingDir() {
-  return join10(tiloriHome(), "pending");
+  return join11(tiloriHome(), "pending");
 }
 function pendingPath(handle) {
-  return join10(pendingDir(), `${validateHandle(handle)}.json`);
+  return join11(pendingDir(), `${validateHandle(handle)}.json`);
 }
 function writePending(p) {
   ensurePrivateDir(tiloriHome());
@@ -22256,7 +22589,7 @@ function readPending(handle) {
   assertPrivate(path);
   let parsed;
   try {
-    parsed = JSON.parse(readFileSync5(path, "utf8"));
+    parsed = JSON.parse(readFileSync7(path, "utf8"));
   } catch {
     throw new Error(`${path} is not valid JSON; remove it and run setup again.`);
   }
@@ -22705,8 +23038,8 @@ async function awaitAgentKey(o) {
 }
 
 // src/refresh.ts
-import { existsSync as existsSync6, readFileSync as readFileSync6, unlinkSync as unlinkSync5 } from "fs";
-import { join as join11 } from "path";
+import { existsSync as existsSync6, readFileSync as readFileSync8, unlinkSync as unlinkSync5 } from "fs";
+import { join as join12 } from "path";
 var REFRESH_PATH = "/api/v1/agents/refresh";
 var COMPLETE_PATH = "/api/v1/agents/refresh/complete";
 function oldKeyPath(handle) {
@@ -22717,13 +23050,13 @@ function dropStaleBackup(handle) {
   if (!existsSync6(path))
     return false;
   assertPrivate(path);
-  if (readFileSync6(path, "utf8").trim() !== readKey(handle))
+  if (readFileSync8(path, "utf8").trim() !== readKey(handle))
     return false;
   deleteFile(path);
   return true;
 }
 function refreshPath(handle) {
-  return join11(pendingDir(), `${validateHandle(handle)}.refresh.json`);
+  return join12(pendingDir(), `${validateHandle(handle)}.refresh.json`);
 }
 var REFRESH_LINES = {
   noKey: (handle) => `@${handle} has no key here to refresh. Run /universal-market:setup ${handle} to connect it first.`,
@@ -22773,7 +23106,7 @@ function readRefresh(handle) {
   const bad = () => new Error(`${path} is malformed; remove it and run the refresh again.`);
   let j;
   try {
-    j = JSON.parse(readFileSync6(path, "utf8"));
+    j = JSON.parse(readFileSync8(path, "utf8"));
   } catch {
     throw bad();
   }
@@ -22991,7 +23324,7 @@ async function finishRefresh(handle, o) {
 
 // src/connect.ts
 import { existsSync as existsSync7, readdirSync as readdirSync3, renameSync as renameSync3 } from "fs";
-import { join as join12 } from "path";
+import { join as join13 } from "path";
 function shellWord(v) {
   return /^[A-Za-z0-9._~:/%@+=,-]+$/.test(v) ? v : `'${v.replaceAll("'", `'\\''`)}'`;
 }
@@ -23101,11 +23434,11 @@ async function runConnect(o) {
     await m.close();
   }
   if (moving) {
-    const dir = join12(tiloriHome(), "agents");
+    const dir = join13(tiloriHome(), "agents");
     const stamp = new Date(o.now?.() ?? Date.now()).toISOString().replace(/[:.]/g, "-");
     const files = existsSync7(dir) ? readdirSync3(dir).filter((f) => f.endsWith(".key")) : [];
     for (const f of files)
-      renameSync3(join12(dir, f), join12(dir, `${f}.replaced-${stamp}`));
+      renameSync3(join13(dir, f), join13(dir, `${f}.replaced-${stamp}`));
     config.agents = {};
     delete config.default_agent;
   }
@@ -23434,6 +23767,24 @@ Usage:
       exactly as Tilori sent them (absent if it didn't), and body. Read-only. Exits 0 on success, 2 when Tilori refuses
       (not found, hidden from this agent, no read scope), 1 on bad input, a
       transport error or no answer within 10 s.
+  tilori-agent pr-work listing --repo <owner/repo> --pr <number> --agents <file> [--docs-only] [--acceptance <text>] [--defaults <path>] [--repo-dir <checkout>]
+      Prints one JSON line with a Market create_listing payload and its selected
+      reviewers. Reads the repository's merge-check defaults and the JSON agents
+      file locally. Default review kinds are code and security; --docs-only
+      selects docs. Makes no Market call and reads no key or agent config.
+  tilori-agent pr-work propose --repo <owner/repo> --pr <number> --agents <file> [--txs <file>] [--docs-only] [--acceptance <text>] [--defaults <path>] [--repo-dir <checkout>]
+      Prints one JSON line with a universal-market/pr-review proposal for each
+      selected reviewer and a parent proposal, or null until --txs supplies the
+      review transaction UUIDs by kind. Uses the same local files and reviewer
+      selection as listing. Makes no Market call and reads no key or agent config.
+  tilori-agent pr-work open --building <uuid> --txn <uuid> [--body <file>]
+      Prints one JSON line { header, body? } with the Building: and Market:
+      header lines for a PR body, optionally prepended to --body <file>.
+      Makes no Market call and reads no key or agent config.
+  tilori-agent pr-work take --role implementer|reviewer --listing <uuid> [--txn <uuid>]
+      Prints one JSON line { role, steps } naming the Market and Tilori tool
+      calls for taking pr-work. Makes no Market call and reads no key or
+      agent config.
   tilori-agent market-evidence <execution-uuid> --out <path> [--agent <handle>]
       Saves one Market execution as evidence for merge-check (UNI-1028):
       get_execution with the contract block and completed Task outputs,
@@ -23489,10 +23840,22 @@ function parseArgs(argv) {
     "home",
     "url-origin",
     "name",
-    "out"
+    "out",
+    "defaults",
+    "repo-dir",
+    "repo",
+    "pr",
+    "agents",
+    "acceptance",
+    "txs",
+    "building",
+    "txn",
+    "body",
+    "role",
+    "listing"
   ]);
   let rest = [];
-  const takes = { "get-post": 1, "search-posts": 1, "market-evidence": 1, upload: 2, "file-info": 1, setup: 1 };
+  const takes = { "get-post": 1, "search-posts": 1, "market-evidence": 1, "pr-work": 1, upload: 2, "file-info": 1, setup: 1 };
   for (let i = 1;i < argv.length; i++) {
     const a = argv[i];
     if (a === "--" && argv[0] === "claude") {
@@ -23526,6 +23889,11 @@ function parseArgs(argv) {
     } else
       flags.set(name, true);
   }
+  if (flags.has("out") && argv[0] !== "market-evidence")
+    throw new Error("--out is only for market-evidence.");
+  for (const name of ["defaults", "repo-dir", "repo", "pr", "docs-only", "agents", "acceptance", "txs", "building", "txn", "body", "role", "listing"])
+    if (flags.has(name) && argv[0] !== "pr-work")
+      throw new Error(`--${name} is only for pr-work.`);
   return { cmd: argv[0] ?? "help", flags, positionals, rest };
 }
 var POST_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -23581,7 +23949,7 @@ async function readSecretFromStdin(prompt) {
   });
 }
 function agentsWithKeys() {
-  const dir = join13(tiloriHome(), "agents");
+  const dir = join14(tiloriHome(), "agents");
   if (!existsSync8(dir))
     return [];
   return readdirSync4(dir).filter((f) => f.endsWith(".key")).map((f) => f.slice(0, -4)).filter((h) => {
@@ -23599,7 +23967,7 @@ function requireAgent(config, a) {
     throw new Error("No agent selected. Pass --agent, set TILORI_AGENT, or run tilori-agent init --default.");
   return agent;
 }
-var HOMELESS = new Set(["help", "--help", "-h"]);
+var HOMELESS = new Set(["help", "--help", "-h", "pr-work"]);
 var LAUNCH_VARS = ["TILORI_HOME", "TILORI_MCP_URL", "TILORI_MARKET_URL", "TILORI_AGENT", "TILORI_SOCKET", "TILORI_URL", "TILORI_LAUNCH_CWD"];
 function launchCwd(env = process.env, fallback = process.cwd()) {
   const want = env.TILORI_LAUNCH_CWD;
@@ -23620,7 +23988,7 @@ async function launchClaude(args) {
     if (a === "--settings" || a.startsWith("--settings="))
       throw new Error("claude sets Claude Code's --settings itself; pass other settings in a settings file instead.");
   const home = allowedHome(dir);
-  const config = loadConfig(join13(home, "config.json"));
+  const config = loadConfig(join14(home, "config.json"));
   const env = { TILORI_HOME: home, TILORI_MCP_URL: buildMcpUrl(config.url).toString() };
   if (config.market_url)
     env.TILORI_MARKET_URL = buildMarketUrl(config.market_url).toString();
@@ -23869,6 +24237,91 @@ async function main(argv = process.argv.slice(2)) {
           await client.close();
         }
       }
+      case "pr-work": {
+        const subcommand = args.positionals[0];
+        if (subcommand === "open") {
+          const allowed = new Set(["building", "txn", "body"]);
+          for (const name of args.flags.keys())
+            if (!allowed.has(name))
+              throw new Error(`pr-work open: does not take --${name}.`);
+          const building = str(args, "building");
+          const txn = str(args, "txn");
+          if (!building)
+            throw new Error("pr-work open: needs --building <uuid>.");
+          if (!txn)
+            throw new Error("pr-work open: needs --txn <uuid>.");
+          process.stdout.write(JSON.stringify(buildPrWorkOpen({ building, txn, bodyPath: str(args, "body") })) + `
+`);
+          return 0;
+        }
+        if (subcommand === "take") {
+          const allowed = new Set(["role", "listing", "txn"]);
+          for (const name of args.flags.keys())
+            if (!allowed.has(name))
+              throw new Error(`pr-work take: does not take --${name}.`);
+          const role = str(args, "role");
+          const listing = str(args, "listing");
+          if (!role)
+            throw new Error("pr-work take: needs --role implementer|reviewer.");
+          if (!listing)
+            throw new Error("pr-work take: needs --listing <uuid>.");
+          process.stdout.write(JSON.stringify(buildPrWorkTake({ role, listing, txn: str(args, "txn") })) + `
+`);
+          return 0;
+        }
+        if (subcommand !== "listing" && subcommand !== "propose")
+          throw new Error("pr-work needs the listing or propose subcommand (or open, take): tilori-agent pr-work listing|propose|open|take ...");
+        const fail = (message) => new Error(`pr-work ${subcommand}${subcommand === "propose" ? ":" : ""} ${message}`);
+        const allowed = new Set(["repo", "pr", "agents", "docs-only", "acceptance", "defaults", "repo-dir"]);
+        if (subcommand === "propose")
+          allowed.add("txs");
+        for (const name of args.flags.keys())
+          if (!allowed.has(name))
+            throw fail(`does not take --${name}.`);
+        const repo = str(args, "repo");
+        const pr = str(args, "pr");
+        const agentsPath = str(args, "agents");
+        if (!repo)
+          throw fail("needs --repo <owner/repo>.");
+        if (!pr)
+          throw fail("needs --pr <number>.");
+        if (!agentsPath)
+          throw fail("needs --agents <file>.");
+        const readJson = (path, name) => {
+          let text;
+          try {
+            text = readFileSync9(path, "utf8");
+          } catch {
+            throw new Error(`pr-work ${subcommand}: could not read ${name} file ${path}.`);
+          }
+          try {
+            return JSON.parse(text);
+          } catch {
+            throw new Error(`pr-work ${subcommand}: ${name} file is not valid JSON: ${path}.`);
+          }
+        };
+        const options = {
+          repo,
+          pr,
+          docsOnly: args.flags.has("docs-only"),
+          defaultsPath: str(args, "defaults"),
+          repoDir: str(args, "repo-dir"),
+          agents: parseAgents(readJson(agentsPath, "agents")),
+          acceptance: str(args, "acceptance")
+        };
+        if (subcommand === "listing") {
+          process.stdout.write(JSON.stringify(buildPrWorkListing(options)) + `
+`);
+          return 0;
+        }
+        const txsPath = str(args, "txs");
+        if (args.flags.has("txs") && !txsPath)
+          throw fail("needs a file path after --txs.");
+        const txs = txsPath ? readJson(txsPath, "txs") : undefined;
+        process.stdout.write(JSON.stringify(buildPrWorkProposal({ ...options, txs })) + `
+`);
+        return 0;
+      }
       case "market-evidence": {
         const id = args.positionals[0] ?? "";
         if (!POST_ID.test(id))
@@ -23887,11 +24340,12 @@ async function main(argv = process.argv.slice(2)) {
         const client = new TiloriAgentClient({ url: market, apiKey: readKey(agent) });
         const timeout = AbortSignal.timeout(MARKET_EVIDENCE_TIMEOUT_MS);
         const abort = AbortSignal.any([signal, timeout]);
+        const stopped = () => new Error(signal.aborted ? "market-evidence: interrupted; nothing written." : "market-evidence: no answer in time.");
         let record;
         try {
           record = await Promise.race([
             client.getExecutionEvidence(id, { signal: abort, timeout: MARKET_EVIDENCE_TIMEOUT_MS }),
-            new Promise((_, reject) => abort.addEventListener("abort", () => reject(new Error("market-evidence: no answer in time.")), { once: true }))
+            new Promise((_, reject) => abort.addEventListener("abort", () => reject(stopped()), { once: true }))
           ]);
         } catch (cause) {
           if (cause instanceof ToolRefused) {
@@ -23899,7 +24353,7 @@ async function main(argv = process.argv.slice(2)) {
             return 2;
           }
           if (abort.aborted)
-            throw new Error("market-evidence: no answer in time.");
+            throw stopped();
           const status = cause.status;
           throw new Error(typeof status === "number" ? `market-evidence: Market answered HTTP ${status}.` : "market-evidence: could not read from Market.");
         } finally {
@@ -24161,7 +24615,7 @@ async function main(argv = process.argv.slice(2)) {
         const url = keyUrl(config, str(args, "url"));
         const handles = agentsWithKeys();
         if (!handles.length)
-          throw new Error(`No agent keys in ${join13(tiloriHome(), "agents")}. Run tilori-agent init first.`);
+          throw new Error(`No agent keys in ${join14(tiloriHome(), "agents")}. Run tilori-agent init first.`);
         const agents = handles.map((handle) => {
           const s = config.agents?.[handle] ?? {};
           const apiKey = readKey(handle);
@@ -24251,7 +24705,7 @@ ${rules}` : "");
         if (!handles.length) {
           if (pending.length)
             return 0;
-          console.log(`No agents on this machine yet: no keys in ${join13(tiloriHome(), "agents")}. ` + "Run tilori-agent setup [<handle>] to create and connect one, or tilori-agent init --agent <handle> --url <tilori-mcp-url> for an existing key");
+          console.log(`No agents on this machine yet: no keys in ${join14(tiloriHome(), "agents")}. ` + "Run tilori-agent setup [<handle>] to create and connect one, or tilori-agent init --agent <handle> --url <tilori-mcp-url> for an existing key");
           return 0;
         }
         if (serverLine)
