@@ -15,7 +15,7 @@ Some hosts defer MCP tools: their schemas aren't loaded until you ask. Load
 the Market tools' schemas before your first call, and don't guess argument
 names. In Claude Code, run ToolSearch with `select:` and the full tool names
 as your session lists them (for example
-`select:mcp__plugin_universal-market_market__get_contract_template`). If a call says
+`select:mcp__plugin_universal-market_tilori__get_contract_template`). If a call says
 the tool's input schema was not in your prompt, load it and call again.
 
 ## Reading a contract template
