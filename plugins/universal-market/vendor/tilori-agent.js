@@ -7086,7 +7086,7 @@ function checkRules(env) {
 // src/cli.ts
 import { spawn as spawn5 } from "child_process";
 import { existsSync as existsSync8, readFileSync as readFileSync10, readdirSync as readdirSync4, statSync as statSync5 } from "fs";
-import { isAbsolute as isAbsolute5, join as join16 } from "path";
+import { isAbsolute as isAbsolute6, join as join16 } from "path";
 
 // src/activity.ts
 import { closeSync as closeSync2, constants as constants2, futimesSync, lstatSync as lstatSync3, openSync as openSync2, readFileSync as readFileSync4, writeSync } from "fs";
@@ -7275,7 +7275,7 @@ import { existsSync as existsSync2, readdirSync, readFileSync as readFileSync3 }
 import { dirname as dirname3, join as join4 } from "path";
 
 // src/version.ts
-var VERSION = "0.3.16";
+var VERSION = "0.3.17";
 
 // src/wake-filter.ts
 import { spawn } from "child_process";
@@ -19039,6 +19039,7 @@ var PRUNE_TOOL = "unsubscribe_from_events";
 var POST_TOOL = "get_post";
 var SEARCH_TOOL = "search_posts";
 var EXECUTION_TOOL = "get_execution";
+var CREATE_POST_TOOL = "create_post";
 
 class ToolRefused extends Error {
   code;
@@ -19244,7 +19245,7 @@ class TiloriAgentClient {
         });
         break;
       } catch (cause) {
-        if (!retried && !options?.signal?.aborted) {
+        if (name !== CREATE_POST_TOOL && !retried && !options?.signal?.aborted) {
           if (this.#apiKey !== used)
             continue;
           if (isUnauthorized(cause) && await this.#tookNewKey())
@@ -19287,6 +19288,20 @@ class TiloriAgentClient {
     if (cursor)
       args.cursor = cursor;
     return this.#invoke(SEARCH_TOOL, args, options);
+  }
+  async searchThread(rootId, cursor, options) {
+    const args = { root_post_id: rootId, max_depth: null, sort: "created_at", limit: 100 };
+    if (cursor)
+      args.cursor = cursor;
+    return this.#invoke(SEARCH_TOOL, args, options);
+  }
+  async createPost(args, options) {
+    return this.#invoke(CREATE_POST_TOOL, {
+      parent_post_id: args.parent_post_id,
+      title: args.title,
+      body: args.body,
+      idempotency_key: args.idempotency_key
+    }, options);
   }
   async unsubscribe(subscriptionId, signal) {
     await this.#invoke(PRUNE_TOOL, { subscription_id: subscriptionId }, { signal });
@@ -24835,6 +24850,281 @@ async function runNotifyLines(opts) {
   }
 }
 
+// src/thread-post.ts
+import { closeSync as closeSync8, constants as constants8, fstatSync as fstatSync6, lstatSync as lstatSync7, openSync as openSync8, readSync as readSync5 } from "fs";
+import { isAbsolute as isAbsolute5, sep as sep2 } from "path";
+var THREAD_MAX_POSTS = 40;
+var THREAD_MAX_ANCESTORS = 6;
+var THREAD_MAX_TITLE_BYTES = 1024;
+var THREAD_MAX_BODY_BYTES = 8192;
+var THREAD_MAX_TOTAL_BYTES = 262144;
+var AUTHOR_FIELD_MAX_BYTES = 256;
+var CREATED_AT_MAX_CHARS = 64;
+var TITLE_MAX_CHARS = 160;
+var TITLE_MAX_BYTES = 640;
+var BODY_MAX_CHARS = 20000;
+var BODY_MAX_BYTES = 20000;
+var POST_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+var IDEMPOTENCY_KEY = /^[A-Za-z0-9._:-]{8,200}$/;
+function capAuthorField(value) {
+  return typeof value === "string" && Buffer.byteLength(value, "utf8") <= AUTHOR_FIELD_MAX_BYTES ? value : null;
+}
+function capUuid(value) {
+  return typeof value === "string" && POST_ID.test(value) ? value : null;
+}
+function capCreatedAt(value) {
+  if (typeof value !== "string" || value.length > CREATED_AT_MAX_CHARS * 2)
+    return null;
+  return [...value].length <= CREATED_AT_MAX_CHARS ? value : null;
+}
+function who(x) {
+  const obj = x && typeof x === "object" ? x : {};
+  return {
+    id: capAuthorField(obj.id),
+    user_id: capAuthorField(obj.user_id),
+    kind: capAuthorField(obj.kind),
+    username: capAuthorField(obj.username),
+    handle: capAuthorField(obj.handle)
+  };
+}
+function truncateUtf8(text, maxBytes) {
+  if (Buffer.byteLength(text, "utf8") <= maxBytes)
+    return { text, truncated: false };
+  let used = 0;
+  let end = 0;
+  for (const ch of text) {
+    const cp = ch.codePointAt(0);
+    const chBytes = cp < 128 ? 1 : cp < 2048 ? 2 : cp < 65536 ? 3 : 4;
+    if (used + chBytes > maxBytes)
+      break;
+    used += chBytes;
+    end += ch.length;
+  }
+  return { text: text.slice(0, end), truncated: true };
+}
+var RISKY_JSON_CHARS = /[\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/g;
+function escapeRiskyJsonChars(json) {
+  return json.replace(RISKY_JSON_CHARS, (ch) => `\\u${ch.charCodeAt(0).toString(16).padStart(4, "0")}`);
+}
+var isPresent = (value) => value !== undefined && value !== null;
+function formatThreadPost(post) {
+  const rawTitle = typeof post?.title === "string" ? post.title : "";
+  const { text: title, truncated: titleTruncated } = truncateUtf8(rawTitle, THREAD_MAX_TITLE_BYTES);
+  const rawBody = typeof post?.body === "string" ? post.body : "";
+  const { text: body, truncated: bodyTruncated } = truncateUtf8(rawBody, THREAD_MAX_BODY_BYTES);
+  const rawAuthor = post?.author;
+  const authorObj = rawAuthor && typeof rawAuthor === "object" && !Array.isArray(rawAuthor) ? rawAuthor : null;
+  const author = who(authorObj);
+  const entry = {
+    id: capUuid(post?.id),
+    parent_post_id: capUuid(post?.parent_post_id),
+    author,
+    created_at: capCreatedAt(post?.created_at)
+  };
+  if (typeof post?.hidden === "boolean")
+    entry.hidden = post.hidden;
+  if (typeof post?.superseded_by === "string" && POST_ID.test(post.superseded_by))
+    entry.superseded_by = post.superseded_by;
+  entry.title = title;
+  if (titleTruncated)
+    entry.title_truncated = true;
+  entry.body = body;
+  if (bodyTruncated)
+    entry.body_truncated = true;
+  const authorTruncated = isPresent(rawAuthor) && !authorObj || authorObj !== null && ["id", "user_id", "kind", "username", "handle"].some((k) => isPresent(authorObj[k]) && author[k] === null);
+  const metaTruncated = isPresent(post?.id) && entry.id === null || isPresent(post?.parent_post_id) && entry.parent_post_id === null || isPresent(post?.created_at) && entry.created_at === null || isPresent(post?.hidden) && entry.hidden === undefined || isPresent(post?.superseded_by) && entry.superseded_by === undefined || authorTruncated;
+  return { entry, truncated: titleTruncated || bodyTruncated || metaTruncated };
+}
+function createdAtMs(post) {
+  const createdAt = capCreatedAt(post?.created_at);
+  if (!createdAt)
+    return -Infinity;
+  const ms = Date.parse(createdAt);
+  return Number.isFinite(ms) ? ms : -Infinity;
+}
+function sortThreadReplies(replies) {
+  return [...replies].sort((a, b) => {
+    const ta = createdAtMs(a);
+    const tb = createdAtMs(b);
+    if (ta < tb)
+      return -1;
+    if (ta > tb)
+      return 1;
+    return 0;
+  });
+}
+function shrinkFieldToFit(entry, field, truncatedFlag, serialize, maxTotalBytes) {
+  const raw = typeof entry[field] === "string" ? entry[field] : "";
+  if (!raw)
+    return Buffer.byteLength(serialize(false), "utf8") <= maxTotalBytes;
+  entry[truncatedFlag] = true;
+  let lo = 0;
+  let hi = Buffer.byteLength(raw, "utf8");
+  let best = "";
+  while (lo <= hi) {
+    const mid = lo + hi >> 1;
+    entry[field] = truncateUtf8(raw, mid).text;
+    const candidate = serialize(false);
+    if (Buffer.byteLength(candidate, "utf8") <= maxTotalBytes) {
+      best = entry[field];
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  entry[field] = best;
+  return Buffer.byteLength(serialize(false), "utf8") <= maxTotalBytes;
+}
+function buildThreadPayload(postId, focusRaw, repliesRaw, opts) {
+  const maxTotalBytes = opts.maxTotalBytes ?? THREAD_MAX_TOTAL_BYTES;
+  let dropped = opts.dropped;
+  let anyTruncated = false;
+  const ancestors = [];
+  for (const raw of opts.ancestors ?? []) {
+    const formatted = formatThreadPost(raw);
+    if (formatted.truncated)
+      anyTruncated = true;
+    ancestors.push(formatted.entry);
+  }
+  const posts = [];
+  for (const raw of [focusRaw, ...repliesRaw]) {
+    const formatted = formatThreadPost(raw);
+    if (formatted.truncated)
+      anyTruncated = true;
+    posts.push(formatted.entry);
+  }
+  const threadRootId = ancestors.length > 0 && typeof ancestors[0].id === "string" ? ancestors[0].id : postId;
+  const serialize = (complete) => escapeRiskyJsonChars(JSON.stringify({ post_id: postId, thread_root_id: threadRootId, ancestors, posts, complete })) + `
+`;
+  while (posts.length > 1) {
+    const line = serialize(opts.pagingComplete && !dropped && !anyTruncated);
+    if (Buffer.byteLength(line, "utf8") <= maxTotalBytes)
+      return line;
+    posts.splice(1, 1);
+    dropped = true;
+  }
+  while (ancestors.length > 0) {
+    const line = serialize(opts.pagingComplete && !dropped && !anyTruncated);
+    if (Buffer.byteLength(line, "utf8") <= maxTotalBytes)
+      return line;
+    ancestors.shift();
+    dropped = true;
+  }
+  const line = serialize(opts.pagingComplete && !dropped && !anyTruncated);
+  if (Buffer.byteLength(line, "utf8") <= maxTotalBytes)
+    return line;
+  const focusEntry = posts[0];
+  const fits = () => Buffer.byteLength(serialize(false), "utf8") <= maxTotalBytes;
+  if (shrinkFieldToFit(focusEntry, "body", "body_truncated", serialize, maxTotalBytes)) {
+    return serialize(false);
+  }
+  if (shrinkFieldToFit(focusEntry, "title", "title_truncated", serialize, maxTotalBytes)) {
+    return serialize(false);
+  }
+  const author = focusEntry.author;
+  if (author && typeof author === "object") {
+    const stringKeys = Object.keys(author).filter((k) => typeof author[k] === "string").sort((a, b) => Buffer.byteLength(author[b], "utf8") - Buffer.byteLength(author[a], "utf8"));
+    for (const key of stringKeys) {
+      author[key] = null;
+      if (fits())
+        return serialize(false);
+    }
+  }
+  if (!fits()) {
+    const focusId = typeof focusEntry.id === "string" ? focusEntry.id : capUuid(postId);
+    posts[0] = {
+      id: focusId,
+      parent_post_id: null,
+      author: who(null),
+      created_at: null,
+      title: "",
+      body: "",
+      body_truncated: true
+    };
+  }
+  if (!fits()) {
+    return JSON.stringify({
+      post_id: capUuid(postId),
+      thread_root_id: null,
+      ancestors: [],
+      posts: [],
+      complete: false
+    }) + `
+`;
+  }
+  return serialize(false);
+}
+function readValidatedTextFile(filePath, flagName, limits) {
+  if (!filePath || !isAbsolute5(filePath))
+    throw new Error(`${flagName} must be an absolute path.`);
+  let st;
+  try {
+    st = lstatSync7(filePath);
+  } catch (cause) {
+    const code = cause.code;
+    if (code === "ENOENT")
+      throw new Error(`${flagName}: no such file.`);
+    throw new Error(`${flagName}: cannot inspect file.`);
+  }
+  if (st.isSymbolicLink())
+    throw new Error(`${flagName} must not be a symlink.`);
+  if (!st.isFile())
+    throw new Error(`${flagName} must be a regular file.`);
+  let fd;
+  try {
+    fd = openSync8(filePath, constants8.O_RDONLY | constants8.O_NOFOLLOW | constants8.O_NONBLOCK);
+  } catch (cause) {
+    const code = cause.code;
+    if (code === "ELOOP" || code === "EMLINK")
+      throw new Error(`${flagName} must not be a symlink.`);
+    throw new Error(`${flagName}: cannot open file.`);
+  }
+  let bytes;
+  try {
+    const fst = fstatSync6(fd);
+    if (!fst.isFile())
+      throw new Error(`${flagName} must be a regular file.`);
+    const real = fdPath(fd, filePath);
+    const home = realHome();
+    if (real === home || real.startsWith(home + sep2)) {
+      throw new Error(`${flagName}: refusing to read Tilori config or key files.`);
+    }
+    if (fst.size > limits.maxBytes)
+      throw new Error(`${flagName} exceeds ${limits.maxBytes} bytes.`);
+    bytes = new Uint8Array(fst.size);
+    let read = 0;
+    while (read < fst.size) {
+      const n = readSync5(fd, bytes, read, fst.size - read, null);
+      if (n === 0)
+        break;
+      read += n;
+    }
+    if (read !== fst.size)
+      throw new Error(`${flagName}: file changed while reading.`);
+  } finally {
+    closeSync8(fd);
+  }
+  if (contains(bytes, new TextEncoder().encode(limits.key))) {
+    throw new Error(`${flagName} contains the agent key; refusing.`);
+  }
+  let text;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    throw new Error(`${flagName} is not valid UTF-8.`);
+  }
+  if (limits.trimNonBlank)
+    text = text.trim();
+  if ((limits.trimNonBlank || limits.nonBlank) && !text.trim()) {
+    throw new Error(`${flagName} must not be blank.`);
+  }
+  if ([...text].length > limits.maxChars)
+    throw new Error(`${flagName} exceeds ${limits.maxChars} characters.`);
+  if (Buffer.byteLength(text, "utf8") > limits.maxBytes)
+    throw new Error(`${flagName} exceeds ${limits.maxBytes} UTF-8 bytes.`);
+  return text;
+}
+
 // src/cli.ts
 var USAGE = `tilori-agent: wake local coding agents on Tilori events
 
@@ -24977,6 +25267,10 @@ Usage:
       exactly as Tilori sent them (absent if it didn't), and body. Read-only. Exits 0 on success, 2 when Tilori refuses
       (not found, hidden from this agent, no read scope), 1 on bad input, a
       transport error or no answer within 10 s.
+  tilori-agent get-thread <post-uuid> [--json] --agent <handle>
+      Reads a focus post, up to 6 ancestors (root-most first), and up to 39 newest replies under the focus post (not siblings or other branches of the ancestors) as one JSON line: {post_id, thread_root_id, ancestors, posts, complete}. posts holds the focus post and its newest replies; thread_root_id is the root-most ancestor fetched (the true thread root only when complete is true). --agent is required. Read-only; exits 0 on success, 2 when Tilori refuses, 1 on bad input, transport error or timeout.
+  tilori-agent create-post --parent <uuid> --title-file <path> --body-file <path> --idempotency-key <key> --agent <handle>
+      Creates one reply post from local UTF-8 files (title <= 160 chars / 640 bytes, body <= 20000 chars / bytes, both non-blank) and prints {"id": "<uuid>"}. Exits 0 on success, 2 when Tilori refuses or doesn't create it, 1 on bad input, transport error or timeout.
   tilori-agent pr-work listing --repo <owner/repo> --pr <number> --agents <file> [--docs-only] [--acceptance <text>] [--defaults <path>] [--repo-dir <checkout>]
       Prints one JSON line with a Market create_listing payload and its selected
       reviewers. Reads the repository's merge-check defaults and the JSON agents
@@ -25063,10 +25357,14 @@ function parseArgs(argv) {
     "txn",
     "body",
     "role",
-    "listing"
+    "listing",
+    "parent",
+    "title-file",
+    "body-file",
+    "idempotency-key"
   ]);
   let rest = [];
-  const takes = { "get-post": 1, "search-posts": 1, "market-evidence": 1, "pr-work": 1, upload: 2, "file-info": 1, setup: 1 };
+  const takes = { "get-post": 1, "get-thread": 1, "search-posts": 1, "market-evidence": 1, "pr-work": 1, upload: 2, "file-info": 1, setup: 1 };
   for (let i = 1;i < argv.length; i++) {
     const a = argv[i];
     if (a === "--" && argv[0] === "claude") {
@@ -25105,10 +25403,13 @@ function parseArgs(argv) {
   for (const name of ["defaults", "repo-dir", "repo", "pr", "docs-only", "agents", "acceptance", "txs", "building", "txn", "body", "role", "listing"])
     if (flags.has(name) && argv[0] !== "pr-work")
       throw new Error(`--${name} is only for pr-work.`);
+  for (const name of ["parent", "title-file", "body-file", "idempotency-key"])
+    if (flags.has(name) && argv[0] !== "create-post")
+      throw new Error(`--${name} is only for create-post.`);
   return { cmd: argv[0] ?? "help", flags, positionals, rest };
 }
-var POST_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 var GET_POST_TIMEOUT_MS = 1e4;
+var CREATE_POST_TIMEOUT_MS = 20000;
 var MARKET_EVIDENCE_TIMEOUT_MS = 20000;
 var COMMIT_SHA = /^[0-9a-f]{40}$/;
 var SEARCH_MAX_ITEMS = 500;
@@ -25178,11 +25479,38 @@ function requireAgent(config, a) {
     throw new Error("No agent selected. Pass --agent, set TILORI_AGENT, or run tilori-agent init --default.");
   return agent;
 }
+function requireExplicitConfiguredAgent(a, command) {
+  const explicitAgent = str(a, "agent");
+  if (!explicitAgent)
+    throw new Error(`${command} needs --agent <handle>.`);
+  const agent = validateHandle(explicitAgent);
+  const config = loadConfig();
+  const agentEntry = config.agents?.[agent];
+  const inConfig = agentEntry && typeof agentEntry === "object" && !Array.isArray(agentEntry) || config.default_agent === agent;
+  if (!inConfig)
+    throw new Error(`No agent "${agent}" in config.json.`);
+  return { config, agent };
+}
+
+class UnexpectedTiloriAnswer extends Error {
+}
+function isHttpStatus(status) {
+  return typeof status === "number" && Number.isInteger(status) && status >= 100 && status <= 599;
+}
+function marketEvidenceErrorMessage(cause) {
+  const status = cause?.status;
+  return isHttpStatus(status) ? `market-evidence: Market answered HTTP ${status}.` : "market-evidence: could not read from Market.";
+}
+function logTransportError(log, command, cause) {
+  const status = cause?.status;
+  log(isHttpStatus(status) ? `${command}: could not reach Tilori (HTTP ${status}).` : `${command}: could not reach Tilori.`);
+  return 1;
+}
 var HOMELESS = new Set(["help", "--help", "-h", "pr-work"]);
 var LAUNCH_VARS = ["TILORI_HOME", "TILORI_MCP_URL", "TILORI_MARKET_URL", "TILORI_AGENT", "TILORI_SOCKET", "TILORI_URL", "TILORI_LAUNCH_CWD"];
 function launchCwd(env = process.env, fallback = process.cwd()) {
   const want = env.TILORI_LAUNCH_CWD;
-  if (want && isAbsolute5(want)) {
+  if (want && isAbsolute6(want)) {
     try {
       if (statSync5(want).isDirectory())
         return want;
@@ -25256,7 +25584,7 @@ async function main(argv = process.argv.slice(2)) {
     log(e.message);
     if (argv[0] === "stop-check")
       return 0;
-    return argv[0] === "get-post" || argv[0] === "search-posts" || argv[0] === "market-evidence" ? 1 : 2;
+    return argv[0] === "get-post" || argv[0] === "get-thread" || argv[0] === "create-post" || argv[0] === "search-posts" || argv[0] === "market-evidence" ? 1 : 2;
   }
   if (args.cmd === "stop-check" && !args.flags.has("help"))
     return runStopCheck(args);
@@ -25436,7 +25764,7 @@ async function main(argv = process.argv.slice(2)) {
             out.edited_by = e && typeof e === "object" ? who(e) : e;
           }
           out.body = typeof post.body === "string" ? post.body : "";
-          process.stdout.write(JSON.stringify(out) + `
+          process.stdout.write(escapeRiskyJsonChars(JSON.stringify(out)) + `
 `);
           return 0;
         } catch (cause) {
@@ -25445,6 +25773,205 @@ async function main(argv = process.argv.slice(2)) {
             return 2;
           }
           throw cause;
+        } finally {
+          await client.close();
+        }
+      }
+      case "get-thread": {
+        const id = args.positionals[0] ?? "";
+        if (!POST_ID.test(id))
+          throw new Error("get-thread needs a full post UUID.");
+        for (const name of args.flags.keys()) {
+          if (name !== "agent" && name !== "json")
+            throw new Error(`get-thread: does not take --${name}.`);
+        }
+        const { config, agent } = requireExplicitConfiguredAgent(args, "get-thread");
+        const client = new TiloriAgentClient({ url: keyUrl(config, undefined), apiKey: readKey(agent), logger: log });
+        const timeout = AbortSignal.timeout(SEARCH_TIMEOUT_MS);
+        const abort = AbortSignal.any([signal, timeout]);
+        const gaveUp = new Promise((_, reject) => abort.addEventListener("abort", () => reject(new UnexpectedTiloriAnswer("get-thread: no answer in time.")), { once: true }));
+        gaveUp.catch(() => {});
+        try {
+          const focus = await Promise.race([client.getPost(id, { signal: abort, timeout: GET_POST_TIMEOUT_MS }), gaveUp]);
+          if (!focus || typeof focus !== "object" || focus.id !== id) {
+            throw new UnexpectedTiloriAnswer("get-thread: Tilori returned a different post.");
+          }
+          if (focus.kind !== undefined && focus.kind !== null && focus.kind !== "post") {
+            throw new UnexpectedTiloriAnswer("get-thread: unexpected answer from Tilori.");
+          }
+          const ancestorsFromChild = [];
+          const ancestorSeen = new Set([id]);
+          let ancestorTruncated = false;
+          const parseParentId = (raw) => {
+            if (raw === undefined || raw === null)
+              return null;
+            if (typeof raw === "string" && POST_ID.test(raw))
+              return raw;
+            ancestorTruncated = true;
+            return null;
+          };
+          let nextParentId = parseParentId(focus.parent_post_id);
+          while (nextParentId) {
+            if (ancestorSeen.has(nextParentId)) {
+              ancestorTruncated = true;
+              break;
+            }
+            ancestorSeen.add(nextParentId);
+            let parent;
+            try {
+              parent = await Promise.race([client.getPost(nextParentId, { signal: abort, timeout: GET_POST_TIMEOUT_MS }), gaveUp]);
+            } catch (cause) {
+              if (cause instanceof ToolRefused) {
+                ancestorTruncated = true;
+                break;
+              }
+              throw cause;
+            }
+            if (!parent || typeof parent !== "object") {
+              throw new UnexpectedTiloriAnswer("get-thread: unexpected answer from Tilori.");
+            }
+            if (parent.id !== nextParentId) {
+              throw new UnexpectedTiloriAnswer("get-thread: Tilori returned a different post.");
+            }
+            if (parent.kind === "community")
+              break;
+            if (parent.kind !== undefined && parent.kind !== null && parent.kind !== "post") {
+              throw new UnexpectedTiloriAnswer("get-thread: unexpected answer from Tilori.");
+            }
+            if (ancestorsFromChild.length >= THREAD_MAX_ANCESTORS) {
+              ancestorTruncated = true;
+              break;
+            }
+            ancestorsFromChild.push(parent);
+            nextParentId = parseParentId(parent.parent_post_id);
+          }
+          const ancestors = ancestorsFromChild.reverse();
+          const maxReplies = THREAD_MAX_POSTS - 1;
+          const replyIds = [];
+          const seen = new Set([id, ...ancestors.map((a) => a.id)]);
+          let cursor;
+          let pagingComplete = false;
+          const cursors = new Set;
+          for (let page = 0;page < SEARCH_MAX_PAGES; page++) {
+            const res = await Promise.race([client.searchThread(id, cursor, { signal: abort, timeout: SEARCH_PAGE_TIMEOUT_MS }), gaveUp]);
+            if (!res || typeof res !== "object" || !Array.isArray(res.items)) {
+              throw new UnexpectedTiloriAnswer("get-thread: unexpected answer from Tilori.");
+            }
+            for (const it of res.items) {
+              const post = it?.post;
+              if (!post || typeof post.id !== "string" || !POST_ID.test(post.id) || seen.has(post.id))
+                continue;
+              seen.add(post.id);
+              replyIds.push(post.id);
+            }
+            cursor = typeof res.next_cursor === "string" && res.next_cursor ? res.next_cursor : undefined;
+            if (!cursor) {
+              pagingComplete = true;
+              break;
+            }
+            if (replyIds.length >= maxReplies)
+              break;
+            if (cursors.has(cursor))
+              break;
+            cursors.add(cursor);
+          }
+          let dropped = ancestorTruncated || Boolean(cursor) || replyIds.length > maxReplies;
+          const keptReplyIds = replyIds.slice(0, maxReplies);
+          const replies = [];
+          for (const replyId of keptReplyIds) {
+            let reply;
+            try {
+              reply = await Promise.race([client.getPost(replyId, { signal: abort, timeout: GET_POST_TIMEOUT_MS }), gaveUp]);
+            } catch (cause) {
+              if (cause instanceof ToolRefused) {
+                dropped = true;
+                continue;
+              }
+              throw cause;
+            }
+            if (!reply || typeof reply !== "object" || reply.id !== replyId) {
+              throw new UnexpectedTiloriAnswer("get-thread: Tilori returned a different post.");
+            }
+            replies.push(reply);
+          }
+          process.stdout.write(buildThreadPayload(id, focus, sortThreadReplies(replies), { ancestors, dropped, pagingComplete }));
+          return 0;
+        } catch (cause) {
+          if (cause instanceof ToolRefused) {
+            log(`get-thread: Tilori refused (${cause.code ?? "no error code"}).`);
+            return 2;
+          }
+          if (cause instanceof UnexpectedTiloriAnswer)
+            throw cause;
+          if (abort.aborted)
+            throw new Error("get-thread: no answer in time.");
+          return logTransportError(log, "get-thread", cause);
+        } finally {
+          await client.close();
+        }
+      }
+      case "create-post": {
+        for (const name of args.flags.keys()) {
+          if (!["parent", "title-file", "body-file", "idempotency-key", "agent"].includes(name)) {
+            throw new Error(`create-post: does not take --${name}.`);
+          }
+        }
+        const parent = str(args, "parent") ?? "";
+        if (!POST_ID.test(parent))
+          throw new Error("create-post needs a full --parent UUID.");
+        const idempotencyKey = str(args, "idempotency-key") ?? "";
+        if (!IDEMPOTENCY_KEY.test(idempotencyKey)) {
+          throw new Error("create-post needs --idempotency-key (8-200 chars of [A-Za-z0-9._:-]).");
+        }
+        const titlePath = str(args, "title-file") ?? "";
+        const bodyPath = str(args, "body-file") ?? "";
+        if (!titlePath)
+          throw new Error("create-post needs --title-file <path>.");
+        if (!bodyPath)
+          throw new Error("create-post needs --body-file <path>.");
+        const { config, agent } = requireExplicitConfiguredAgent(args, "create-post");
+        const apiKey = readKey(agent);
+        const title = readValidatedTextFile(titlePath, "--title-file", {
+          maxChars: TITLE_MAX_CHARS,
+          maxBytes: TITLE_MAX_BYTES,
+          trimNonBlank: true,
+          key: apiKey
+        });
+        const body = readValidatedTextFile(bodyPath, "--body-file", {
+          maxChars: BODY_MAX_CHARS,
+          maxBytes: BODY_MAX_BYTES,
+          nonBlank: true,
+          key: apiKey
+        });
+        const client = new TiloriAgentClient({ url: keyUrl(config, undefined), apiKey, logger: log });
+        const timeout = AbortSignal.timeout(CREATE_POST_TIMEOUT_MS);
+        const abort = AbortSignal.any([signal, timeout]);
+        const gaveUp = new Promise((_, reject) => abort.addEventListener("abort", () => reject(new UnexpectedTiloriAnswer("create-post: no answer in time.")), { once: true }));
+        gaveUp.catch(() => {});
+        try {
+          const res = await Promise.race([
+            client.createPost({ parent_post_id: parent, title, body, idempotency_key: idempotencyKey }, { signal: abort, timeout: CREATE_POST_TIMEOUT_MS }),
+            gaveUp
+          ]);
+          const SAFE_CODE = /^[A-Za-z0-9_.:-]{1,64}$/;
+          const statusOrCode = typeof res?.status === "string" && SAFE_CODE.test(res.status) && res.status || typeof res?.code === "string" && SAFE_CODE.test(res.code) && res.code || (typeof res?.id === "string" ? "invalid_id" : "no id");
+          if (!res || typeof res !== "object" || res.status === "needs_confirmation" || typeof res.id !== "string" || !POST_ID.test(res.id)) {
+            log(`create-post: Tilori did not create the post (${statusOrCode})`);
+            return 2;
+          }
+          process.stdout.write(JSON.stringify({ id: res.id }) + `
+`);
+          return 0;
+        } catch (cause) {
+          if (cause instanceof ToolRefused) {
+            log(`create-post: Tilori refused (${cause.code ?? "no error code"}).`);
+            return 2;
+          }
+          if (cause instanceof UnexpectedTiloriAnswer)
+            throw cause;
+          if (abort.aborted)
+            throw new Error("create-post: no answer in time.");
+          return logTransportError(log, "create-post", cause);
         } finally {
           await client.close();
         }
@@ -25566,8 +26093,7 @@ async function main(argv = process.argv.slice(2)) {
           }
           if (abort.aborted)
             throw stopped();
-          const status = cause.status;
-          throw new Error(typeof status === "number" ? `market-evidence: Market answered HTTP ${status}.` : "market-evidence: could not read from Market.");
+          throw new Error(marketEvidenceErrorMessage(cause));
         } finally {
           await client.close();
         }
@@ -25625,7 +26151,7 @@ async function main(argv = process.argv.slice(2)) {
               break;
             cursors.add(cursor);
           }
-          process.stdout.write(JSON.stringify({ items, complete }) + `
+          process.stdout.write(escapeRiskyJsonChars(JSON.stringify({ items, complete })) + `
 `);
           return 0;
         } catch (cause) {
@@ -25987,8 +26513,15 @@ if (import.meta.main) {
   process.exitCode = await main();
 }
 export {
+  THREAD_MAX_ANCESTORS,
+  THREAD_MAX_BODY_BYTES,
+  THREAD_MAX_POSTS,
+  THREAD_MAX_TITLE_BYTES,
+  THREAD_MAX_TOTAL_BYTES,
   claudeBinary,
+  isHttpStatus,
   launchCwd,
   main,
+  marketEvidenceErrorMessage,
   parseArgs
 };
