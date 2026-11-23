@@ -7086,7 +7086,7 @@ function checkRules(env) {
 // src/cli.ts
 import { spawn as spawn5 } from "child_process";
 import { existsSync as existsSync8, readFileSync as readFileSync10, readdirSync as readdirSync4, statSync as statSync5 } from "fs";
-import { isAbsolute as isAbsolute5, join as join15 } from "path";
+import { isAbsolute as isAbsolute5, join as join16 } from "path";
 
 // src/activity.ts
 import { closeSync as closeSync2, constants as constants2, futimesSync, lstatSync as lstatSync3, openSync as openSync2, readFileSync as readFileSync4, writeSync } from "fs";
@@ -7275,7 +7275,7 @@ import { existsSync as existsSync2, readdirSync, readFileSync as readFileSync3 }
 import { dirname as dirname3, join as join4 } from "path";
 
 // src/version.ts
-var VERSION = "0.3.15";
+var VERSION = "0.3.16";
 
 // src/wake-filter.ts
 import { spawn } from "child_process";
@@ -7676,6 +7676,32 @@ function recordDecisions(value) {
 }
 function recorderConfig(config, handle) {
   return recordDecisions(config.agents?.[handle]?.record_decisions) ? { recordDecisions: true } : {};
+}
+function wakeEngine(value) {
+  if (value === undefined)
+    return "builtin";
+  if (value === "builtin" || value === "wakewise")
+    return value;
+  throw new Error('wake_engine must be "builtin" or "wakewise".');
+}
+function shadowMode(value) {
+  if (value === undefined)
+    return false;
+  if (typeof value !== "boolean")
+    throw new Error("shadow must be true or false.");
+  return value;
+}
+function policyConfig(config, handle) {
+  const s = config.agents?.[handle];
+  const engine = wakeEngine(s?.wake_engine);
+  const shadow = shadowMode(s?.shadow);
+  if (shadow && engine === "wakewise") {
+    throw new Error('shadow cannot be true when wake_engine is "wakewise".');
+  }
+  return {
+    ...engine !== "builtin" ? { wakeEngine: engine } : {},
+    ...shadow ? { shadow: true } : {}
+  };
 }
 function trustServerState(config) {
   const t = config.trust_server;
@@ -20157,6 +20183,515 @@ class WakeLimiter {
   }
 }
 
+// vendor/wakewise/client/policy.ts
+function matchGlob(pattern, text) {
+  let pi = 0;
+  let ti = 0;
+  let starIdx = -1;
+  let matchIdx = 0;
+  while (ti < text.length) {
+    if (pi < pattern.length && (pattern[pi] === "?" || pattern[pi] === text[ti])) {
+      pi += 1;
+      ti += 1;
+    } else if (pi < pattern.length && pattern[pi] === "*") {
+      starIdx = pi;
+      matchIdx = ti;
+      pi += 1;
+    } else if (starIdx !== -1) {
+      pi = starIdx + 1;
+      matchIdx += 1;
+      ti = matchIdx;
+    } else {
+      return false;
+    }
+  }
+  while (pi < pattern.length && pattern[pi] === "*") {
+    pi += 1;
+  }
+  return pi === pattern.length;
+}
+function selectLane(occurrence, config) {
+  const directEnabled = config.directLane !== false;
+  const directKinds = config.directKinds ?? [];
+  const alwaysWake = config.alwaysWake ?? [];
+  if (directEnabled && typeof config.selfId === "string" && config.selfId.length > 0 && typeof occurrence.recipient === "string" && occurrence.recipient === config.selfId && directKinds.some((pattern) => matchGlob(pattern, occurrence.kind))) {
+    return "direct";
+  }
+  if (alwaysWake.some((pattern) => matchGlob(pattern, occurrence.kind))) {
+    return "alwaysWake";
+  }
+  return "normal";
+}
+
+// vendor/wakewise/client/line.ts
+var UUID_RE4 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+var KIND_RE = /^[a-z][a-z0-9_.]{0,63}$/;
+function scrubId(value) {
+  if (typeof value === "string" && UUID_RE4.test(value)) {
+    return { accepted: true, value };
+  }
+  return { accepted: false, reason: "invalid_id" };
+}
+function scrubKind(value) {
+  if (typeof value === "string" && KIND_RE.test(value)) {
+    return { accepted: true, value };
+  }
+  return { accepted: false, reason: "invalid_kind" };
+}
+
+// vendor/wakewise/client/limiter.ts
+var WINDOW_SECONDS = 3600;
+var MAX_COUNT = 999999;
+
+class LimiterStateError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "LimiterStateError";
+  }
+}
+var DEFAULT_LIMITS = {
+  wakesPerHour: 12,
+  directWakesPerHour: 24,
+  alwaysWakePerHour: 6,
+  coalesceSeconds: 15,
+  pauseSeconds: 0,
+  heldQueueMaxIds: 64
+};
+var LIMIT_RANGES = {
+  wakesPerHour: [0, MAX_COUNT],
+  directWakesPerHour: [0, MAX_COUNT],
+  alwaysWakePerHour: [0, MAX_COUNT],
+  coalesceSeconds: [0, WINDOW_SECONDS],
+  pauseSeconds: [0, WINDOW_SECONDS],
+  heldQueueMaxIds: [1, 1024]
+};
+var LANE_ORDER = ["direct", "alwaysWake", "normal"];
+function assertLane(lane) {
+  if (lane !== "normal" && lane !== "direct" && lane !== "alwaysWake") {
+    throw new RangeError(`lane: must be "normal", "direct" or "alwaysWake"`);
+  }
+}
+function createPendingBuffer() {
+  return {
+    refs: [],
+    keys: new Set,
+    overflowCount: 0,
+    startedAt: null
+  };
+}
+function isPlainObject3(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function validateLimitValue(key, value) {
+  const [min, max] = LIMIT_RANGES[key];
+  if (typeof value !== "number" || !Number.isInteger(value) || value < min || value > max) {
+    throw new RangeError(`limits.${key}: must be an integer between ${min} and ${max}`);
+  }
+  return value;
+}
+function validateLimitsUpdate(base, raw) {
+  if (!isPlainObject3(raw)) {
+    throw new RangeError("limits: must be an object");
+  }
+  const next = { ...base };
+  for (const key of Object.keys(raw)) {
+    if (!(key in LIMIT_RANGES)) {
+      throw new RangeError(`limits.${key}: unknown limit key`);
+    }
+    const typedKey = key;
+    const value = raw[key];
+    if (value !== undefined) {
+      next[typedKey] = validateLimitValue(typedKey, value);
+    }
+  }
+  return next;
+}
+function refKey2(ref) {
+  return `${ref.kind}\x00${ref.id}`;
+}
+function defaultMonotonicClock() {
+  return performance.now() / 1000;
+}
+
+class RateLimiter {
+  selfId;
+  directLane;
+  directKinds;
+  alwaysWake;
+  clock;
+  limits;
+  timestamps = {
+    normal: [],
+    direct: [],
+    alwaysWake: []
+  };
+  heldRefs = [];
+  heldKeys = new Set;
+  heldOverflowCount = 0;
+  pending = {
+    normal: createPendingBuffer(),
+    direct: createPendingBuffer(),
+    alwaysWake: createPendingBuffer()
+  };
+  lastWakeAt = null;
+  lastRawNow = null;
+  monoNow = 0;
+  constructor(config = {}) {
+    this.selfId = config.selfId ?? null;
+    this.directLane = config.directLane !== false;
+    this.directKinds = [...config.directKinds ?? ["message.direct", "mention.direct"]];
+    this.alwaysWake = [...config.alwaysWake ?? []];
+    this.clock = config.clock ?? defaultMonotonicClock;
+    this.limits = config.limits === undefined ? { ...DEFAULT_LIMITS } : validateLimitsUpdate(DEFAULT_LIMITS, config.limits);
+    if (config.initialState) {
+      for (const ref of config.initialState.heldRefs ?? []) {
+        this.holdRef(ref);
+      }
+      if (typeof config.initialState.heldOverflowCount === "number") {
+        const clamped = Math.max(0, Math.min(MAX_COUNT, Math.trunc(config.initialState.heldOverflowCount)));
+        this.heldOverflowCount = clamped;
+      }
+    }
+  }
+  getLimits() {
+    return { ...this.limits };
+  }
+  advanceClock(nowSeconds) {
+    const raw = nowSeconds === undefined ? this.clock() : nowSeconds;
+    if (typeof raw !== "number" || !Number.isFinite(raw)) {
+      throw new RangeError("nowSeconds must be a finite number");
+    }
+    if (this.lastRawNow === null) {
+      this.lastRawNow = raw;
+      this.monoNow = raw;
+      return this.monoNow;
+    }
+    const delta = raw - this.lastRawNow;
+    this.lastRawNow = raw;
+    if (delta > 0) {
+      this.monoNow += delta;
+    }
+    return this.monoNow;
+  }
+  prune(lane, nowSeconds) {
+    const cutoff = nowSeconds - WINDOW_SECONDS;
+    const list = this.timestamps[lane];
+    let firstValid = 0;
+    while (firstValid < list.length && list[firstValid] < cutoff) {
+      firstValid += 1;
+    }
+    if (firstValid > 0) {
+      list.splice(0, firstValid);
+    }
+  }
+  capForLane(lane) {
+    if (lane === "direct") {
+      return this.limits.directWakesPerHour;
+    }
+    if (lane === "alwaysWake") {
+      return this.limits.alwaysWakePerHour;
+    }
+    return this.limits.wakesPerHour;
+  }
+  limitKeyForLane(lane) {
+    if (lane === "direct") {
+      return "directWakesPerHour";
+    }
+    if (lane === "alwaysWake") {
+      return "alwaysWakePerHour";
+    }
+    return "wakesPerHour";
+  }
+  isPaused(nowSeconds) {
+    return this.limits.pauseSeconds > 0 && this.lastWakeAt !== null && nowSeconds - this.lastWakeAt < this.limits.pauseSeconds;
+  }
+  holdRef(ref) {
+    const key = refKey2(ref);
+    if (this.heldKeys.has(key)) {
+      return;
+    }
+    if (this.heldRefs.length < this.limits.heldQueueMaxIds) {
+      this.heldKeys.add(key);
+      this.heldRefs.push({ id: ref.id, kind: ref.kind });
+    } else if (this.heldOverflowCount < MAX_COUNT) {
+      this.heldOverflowCount += 1;
+    }
+  }
+  bufferPendingRef(lane, ref) {
+    const buf = this.pending[lane];
+    const key = refKey2(ref);
+    if (buf.keys.has(key)) {
+      return;
+    }
+    if (buf.refs.length < this.limits.heldQueueMaxIds) {
+      buf.keys.add(key);
+      buf.refs.push({ id: ref.id, kind: ref.kind });
+    } else if (buf.overflowCount < MAX_COUNT) {
+      buf.overflowCount += 1;
+    }
+  }
+  clearPending(lane) {
+    const buf = this.pending[lane];
+    buf.refs = [];
+    buf.keys.clear();
+    buf.overflowCount = 0;
+    buf.startedAt = null;
+  }
+  emitWake(lane, extraRefs, nowSeconds) {
+    const combined = [];
+    const seen = new Set;
+    const buf = this.pending[lane];
+    for (const ref of this.heldRefs) {
+      const key = refKey2(ref);
+      if (!seen.has(key)) {
+        seen.add(key);
+        combined.push(ref);
+      }
+    }
+    for (const ref of buf.refs) {
+      const key = refKey2(ref);
+      if (!seen.has(key)) {
+        seen.add(key);
+        combined.push(ref);
+      }
+    }
+    for (const ref of extraRefs) {
+      const key = refKey2(ref);
+      if (!seen.has(key)) {
+        seen.add(key);
+        combined.push({ id: ref.id, kind: ref.kind });
+      }
+    }
+    const drainedOverflow = Math.min(MAX_COUNT, this.heldOverflowCount + buf.overflowCount);
+    this.heldRefs = [];
+    this.heldKeys.clear();
+    this.heldOverflowCount = 0;
+    this.clearPending(lane);
+    this.timestamps[lane].push(nowSeconds);
+    this.lastWakeAt = nowSeconds;
+    return {
+      decision: "wake",
+      lane,
+      refs: combined,
+      heldOverflowCount: drainedOverflow
+    };
+  }
+  flushLane(lane, nowSeconds) {
+    const buf = this.pending[lane];
+    if (buf.refs.length === 0 && buf.overflowCount === 0) {
+      return { decision: "noop" };
+    }
+    this.prune(lane, nowSeconds);
+    if (this.isPaused(nowSeconds) || this.timestamps[lane].length >= this.capForLane(lane)) {
+      for (const ref of buf.refs) {
+        this.holdRef(ref);
+      }
+      this.heldOverflowCount = Math.min(MAX_COUNT, this.heldOverflowCount + buf.overflowCount);
+      this.clearPending(lane);
+      return {
+        decision: "hold",
+        lane,
+        heldIds: this.heldRefs.length,
+        heldOverflowCount: this.heldOverflowCount
+      };
+    }
+    return this.emitWake(lane, [], nowSeconds);
+  }
+  onEvent(occurrence, nowSeconds) {
+    const now = this.advanceClock(nowSeconds);
+    const lane = selectLane(occurrence, {
+      selfId: this.selfId,
+      directLane: this.directLane,
+      directKinds: this.directKinds,
+      alwaysWake: this.alwaysWake
+    });
+    const ref = { id: occurrence.id, kind: occurrence.kind };
+    this.prune(lane, now);
+    if (this.isPaused(now) || this.timestamps[lane].length >= this.capForLane(lane)) {
+      this.holdRef(ref);
+      return {
+        decision: "hold",
+        lane,
+        heldIds: this.heldRefs.length,
+        heldOverflowCount: this.heldOverflowCount
+      };
+    }
+    if (this.limits.coalesceSeconds > 0) {
+      this.bufferPendingRef(lane, ref);
+      const buf = this.pending[lane];
+      if (buf.startedAt === null) {
+        buf.startedAt = now;
+      }
+      if (now - buf.startedAt < this.limits.coalesceSeconds) {
+        return {
+          decision: "coalesce",
+          lane,
+          pendingCount: buf.refs.length
+        };
+      }
+      return this.flushLane(lane, now);
+    }
+    return this.emitWake(lane, [ref], now);
+  }
+  flush(nowSeconds, lane) {
+    const now = this.advanceClock(nowSeconds);
+    if (lane !== undefined) {
+      return this.flushLane(lane, now);
+    }
+    let chosen = null;
+    let earliest = Infinity;
+    for (const candidate of LANE_ORDER) {
+      const buf = this.pending[candidate];
+      if (buf.refs.length === 0 && buf.overflowCount === 0) {
+        continue;
+      }
+      const started = buf.startedAt ?? now;
+      if (chosen === null || started < earliest) {
+        chosen = candidate;
+        earliest = started;
+      }
+    }
+    if (chosen === null) {
+      return { decision: "noop" };
+    }
+    return this.flushLane(chosen, now);
+  }
+  resize(laneOrPartial, perHour) {
+    if (typeof laneOrPartial === "string") {
+      assertLane(laneOrPartial);
+      if (perHour === undefined) {
+        throw new RangeError("resize(lane, perHour): perHour is required");
+      }
+      const key = this.limitKeyForLane(laneOrPartial);
+      this.limits = validateLimitsUpdate(this.limits, { [key]: perHour });
+      return { decision: "resized" };
+    }
+    this.limits = validateLimitsUpdate(this.limits, laneOrPartial);
+    return { decision: "resized" };
+  }
+  waitMs(lane, nowMs) {
+    assertLane(lane);
+    const nowSec = this.advanceClock(nowMs !== undefined ? nowMs / 1000 : undefined);
+    this.prune(lane, nowSec);
+    const pauseWaitMs = this.isPaused(nowSec) ? Math.max(0, Math.ceil((this.lastWakeAt + this.limits.pauseSeconds - nowSec) * 1000)) : 0;
+    const cap = this.capForLane(lane);
+    if (this.timestamps[lane].length < cap) {
+      return pauseWaitMs;
+    }
+    if (cap === 0) {
+      return Infinity;
+    }
+    const oldestIdx = this.timestamps[lane].length - cap;
+    const oldest = this.timestamps[lane][oldestIdx];
+    const capWaitMs = Math.max(0, Math.ceil((oldest + WINDOW_SECONDS - nowSec) * 1000));
+    return Math.max(capWaitMs, pauseWaitMs);
+  }
+  waitAfterNextMs(lane, nowMs) {
+    assertLane(lane);
+    const nowSec = this.advanceClock(nowMs !== undefined ? nowMs / 1000 : undefined);
+    this.prune(lane, nowSec);
+    const cap = this.capForLane(lane);
+    if (cap === 0) {
+      return Infinity;
+    }
+    const pauseAfterMs = this.limits.pauseSeconds > 0 ? this.limits.pauseSeconds * 1000 : 0;
+    const simulatedLen = this.timestamps[lane].length + 1;
+    if (simulatedLen < cap) {
+      return pauseAfterMs;
+    }
+    const oldestIdx = simulatedLen - cap;
+    const oldest = oldestIdx < this.timestamps[lane].length ? this.timestamps[lane][oldestIdx] : nowSec;
+    const capWaitMs = Math.max(0, Math.ceil((oldest + WINDOW_SECONDS - nowSec) * 1000));
+    return Math.max(capWaitMs, pauseAfterMs);
+  }
+  record(lane, nowMs) {
+    assertLane(lane);
+    const nowSec = this.advanceClock(nowMs !== undefined ? nowMs / 1000 : undefined);
+    this.prune(lane, nowSec);
+    this.timestamps[lane].push(nowSec);
+    this.lastWakeAt = nowSec;
+  }
+  used(lane, nowMs) {
+    assertLane(lane);
+    const nowSec = this.advanceClock(nowMs !== undefined ? nowMs / 1000 : undefined);
+    this.prune(lane, nowSec);
+    return this.timestamps[lane].length;
+  }
+  perHour(lane) {
+    assertLane(lane);
+    return this.capForLane(lane);
+  }
+  canRemind(nowMs) {
+    const nowSec = this.advanceClock(nowMs !== undefined ? nowMs / 1000 : undefined);
+    this.prune("normal", nowSec);
+    if (this.isPaused(nowSec) || this.timestamps.normal.length >= this.limits.wakesPerHour) {
+      return false;
+    }
+    this.timestamps.normal.push(nowSec);
+    this.lastWakeAt = nowSec;
+    return true;
+  }
+  exportHeldState() {
+    return {
+      version: 1,
+      heldRefs: this.heldRefs.slice(0, this.limits.heldQueueMaxIds).map((r) => ({ id: r.id, kind: r.kind })),
+      heldOverflowCount: Math.min(MAX_COUNT, Math.max(0, this.heldOverflowCount) + Math.max(0, this.heldRefs.length - this.limits.heldQueueMaxIds))
+    };
+  }
+  importHeldState(snapshot) {
+    if (!isPlainObject3(snapshot)) {
+      throw new LimiterStateError("heldState: snapshot must be a plain object");
+    }
+    for (const key of Object.keys(snapshot)) {
+      if (key !== "version" && key !== "heldRefs" && key !== "heldOverflowCount") {
+        throw new LimiterStateError(`heldState: unknown key "${key}"`);
+      }
+    }
+    if (snapshot.version !== 1) {
+      throw new LimiterStateError("heldState.version: must be 1");
+    }
+    if (!Array.isArray(snapshot.heldRefs)) {
+      throw new LimiterStateError("heldState.heldRefs: must be an array");
+    }
+    if (snapshot.heldRefs.length > this.limits.heldQueueMaxIds) {
+      throw new LimiterStateError(`heldState.heldRefs: length ${snapshot.heldRefs.length} exceeds heldQueueMaxIds (${this.limits.heldQueueMaxIds})`);
+    }
+    if (typeof snapshot.heldOverflowCount !== "number" || !Number.isInteger(snapshot.heldOverflowCount) || snapshot.heldOverflowCount < 0 || snapshot.heldOverflowCount > MAX_COUNT) {
+      throw new LimiterStateError(`heldState.heldOverflowCount: must be an integer between 0 and ${MAX_COUNT}`);
+    }
+    const nextRefs = [];
+    const nextKeys = new Set;
+    for (let i = 0;i < snapshot.heldRefs.length; i += 1) {
+      const entry = snapshot.heldRefs[i];
+      if (!isPlainObject3(entry)) {
+        throw new LimiterStateError(`heldState.heldRefs[${i}]: must be an object`);
+      }
+      for (const k of Object.keys(entry)) {
+        if (k !== "id" && k !== "kind") {
+          throw new LimiterStateError(`heldState.heldRefs[${i}].${k}: unknown key`);
+        }
+      }
+      const idRes = scrubId(entry.id);
+      if (!idRes.accepted) {
+        throw new LimiterStateError(`heldState.heldRefs[${i}].id: must be a 36-char lowercase ASCII UUID`);
+      }
+      const kindRes = scrubKind(entry.kind);
+      if (!kindRes.accepted) {
+        throw new LimiterStateError(`heldState.heldRefs[${i}].kind: must be a valid event kind`);
+      }
+      const key = `${kindRes.value}\x00${idRes.value}`;
+      if (nextKeys.has(key)) {
+        throw new LimiterStateError(`heldState.heldRefs[${i}]: duplicate entry`);
+      }
+      nextKeys.add(key);
+      nextRefs.push({ id: idRes.value, kind: kindRes.value });
+    }
+    this.heldRefs = nextRefs;
+    this.heldKeys = nextKeys;
+    this.heldOverflowCount = snapshot.heldOverflowCount;
+  }
+}
+
 // src/policy.ts
 class BuiltinPolicy {
   now;
@@ -20222,6 +20757,280 @@ class BuiltinPolicy {
     return this.#lane(lane)?.used ?? null;
   }
 }
+function checkNormalPerHour(perHour) {
+  if (!Number.isInteger(perHour) || perHour < 1) {
+    throw new Error("wakes_per_hour must be a positive integer.");
+  }
+}
+function checkDirectPerHour(perHour) {
+  if (!Number.isInteger(perHour) || perHour < 0) {
+    throw new Error("direct_wakes_per_hour must be a non-negative integer.");
+  }
+}
+function errMsg(err) {
+  return err instanceof Error ? err.message : String(err);
+}
+
+class WakewisePolicy {
+  now;
+  #limiter;
+  constructor(normalPerHour, directPerHour, now = Date.now) {
+    this.now = now;
+    checkNormalPerHour(normalPerHour);
+    checkDirectPerHour(directPerHour);
+    this.#limiter = new RateLimiter({
+      limits: {
+        wakesPerHour: normalPerHour,
+        directWakesPerHour: directPerHour,
+        coalesceSeconds: 0,
+        pauseSeconds: 0
+      },
+      clock: () => this.now() / 1000
+    });
+  }
+  decide({ hasDirect }) {
+    const normal = this.waitMs("normal");
+    if (normal === 0)
+      return { lane: "normal" };
+    const direct = hasDirect ? this.waitMs("direct") : Infinity;
+    if (direct === 0)
+      return { lane: "direct" };
+    return { waitMs: Math.min(normal, direct) };
+  }
+  record(lane) {
+    if (this.limit(lane) === 0)
+      return;
+    this.#limiter.record(lane, this.now());
+  }
+  waitMs(lane) {
+    if (this.limit(lane) === 0)
+      return Infinity;
+    return this.#limiter.waitMs(lane, this.now());
+  }
+  afterWakeWaitMs(lane) {
+    const now = this.now();
+    const after = (l) => {
+      if (this.limit(l) === 0)
+        return Infinity;
+      return l === lane ? this.#limiter.waitAfterNextMs(l, now) : this.#limiter.waitMs(l, now);
+    };
+    const normal = after("normal");
+    const direct = after("direct");
+    return normal > 0 && direct > 0 ? Math.min(normal, direct) : 0;
+  }
+  canRemind() {
+    return this.waitMs("normal") === 0;
+  }
+  resize(lane, perHour) {
+    if (lane === "normal")
+      checkNormalPerHour(perHour);
+    else
+      checkDirectPerHour(perHour);
+    this.#limiter.resize(lane, perHour);
+  }
+  limit(lane) {
+    return this.#limiter.perHour(lane);
+  }
+  used(lane) {
+    return this.limit(lane) === 0 ? null : this.#limiter.used(lane, this.now());
+  }
+}
+
+class FailOpenWakewisePolicy {
+  #builtin;
+  #wakewise = null;
+  #onError;
+  #failed = false;
+  constructor(normalPerHour, directPerHour, options = {}) {
+    const now = options.now ?? Date.now;
+    this.#onError = options.onError ?? (() => {});
+    this.#builtin = new BuiltinPolicy(normalPerHour, directPerHour, now);
+    try {
+      this.#wakewise = options.makeWakewise ? options.makeWakewise() : new WakewisePolicy(normalPerHour, directPerHour, now);
+    } catch (err) {
+      this.#fail(err);
+    }
+  }
+  #fail(err) {
+    this.#wakewise = null;
+    if (this.#failed)
+      return;
+    this.#failed = true;
+    this.#onError(`wakewise policy failed: ${errMsg(err)}; using builtin`);
+  }
+  decide(input) {
+    if (this.#wakewise) {
+      try {
+        return this.#wakewise.decide(input);
+      } catch (err) {
+        this.#fail(err);
+      }
+    }
+    return this.#builtin.decide(input);
+  }
+  record(lane) {
+    this.#builtin.record(lane);
+    if (!this.#wakewise)
+      return;
+    try {
+      this.#wakewise.record(lane);
+    } catch (err) {
+      this.#fail(err);
+    }
+  }
+  waitMs(lane) {
+    if (this.#wakewise) {
+      try {
+        return this.#wakewise.waitMs(lane);
+      } catch (err) {
+        this.#fail(err);
+      }
+    }
+    return this.#builtin.waitMs(lane);
+  }
+  afterWakeWaitMs(lane) {
+    if (this.#wakewise) {
+      try {
+        return this.#wakewise.afterWakeWaitMs(lane);
+      } catch (err) {
+        this.#fail(err);
+      }
+    }
+    return this.#builtin.afterWakeWaitMs(lane);
+  }
+  canRemind() {
+    if (this.#wakewise) {
+      try {
+        return this.#wakewise.canRemind();
+      } catch (err) {
+        this.#fail(err);
+      }
+    }
+    return this.#builtin.canRemind();
+  }
+  resize(lane, perHour) {
+    this.#builtin.resize(lane, perHour);
+    if (!this.#wakewise)
+      return;
+    try {
+      this.#wakewise.resize(lane, perHour);
+    } catch (err) {
+      this.#fail(err);
+    }
+  }
+  limit(lane) {
+    if (this.#wakewise) {
+      try {
+        return this.#wakewise.limit(lane);
+      } catch (err) {
+        this.#fail(err);
+      }
+    }
+    return this.#builtin.limit(lane);
+  }
+  used(lane) {
+    if (this.#wakewise) {
+      try {
+        return this.#wakewise.used(lane);
+      } catch (err) {
+        this.#fail(err);
+      }
+    }
+    return this.#builtin.used(lane);
+  }
+}
+function decisionsDiffer(a, b) {
+  if ("lane" in a && "lane" in b)
+    return a.lane !== b.lane;
+  if ("waitMs" in a && "waitMs" in b) {
+    if (a.waitMs === b.waitMs)
+      return false;
+    return Math.abs(a.waitMs - b.waitMs) > 1000;
+  }
+  return true;
+}
+
+class ShadowPolicy {
+  #builtin;
+  #wakewise = null;
+  #now;
+  #onDiff;
+  #onError;
+  #stopped = false;
+  constructor(normalPerHour, directPerHour, options = {}) {
+    this.#now = options.now ?? Date.now;
+    this.#onDiff = options.onDiff ?? (() => {});
+    this.#onError = options.onError ?? (() => {});
+    this.#builtin = new BuiltinPolicy(normalPerHour, directPerHour, this.#now);
+    try {
+      this.#wakewise = options.makeWakewise ? options.makeWakewise() : new WakewisePolicy(normalPerHour, directPerHour, this.#now);
+    } catch (err) {
+      this.#stop(err);
+    }
+  }
+  #stop(err) {
+    this.#wakewise = null;
+    if (this.#stopped)
+      return;
+    this.#stopped = true;
+    this.#onError(`wakewise shadow failed: ${errMsg(err)}; stopping shadow`);
+  }
+  decide(input) {
+    const res = this.#builtin.decide(input);
+    if (this.#wakewise) {
+      try {
+        const ww = this.#wakewise.decide(input);
+        if (decisionsDiffer(res, ww)) {
+          this.#onDiff({
+            at: new Date(this.#now()).toISOString(),
+            method: "decide",
+            builtin: res,
+            wakewise: ww,
+            lane: "lane" in res ? res.lane : null
+          });
+        }
+      } catch (err) {
+        this.#stop(err);
+      }
+    }
+    return res;
+  }
+  record(lane) {
+    this.#builtin.record(lane);
+    if (!this.#wakewise)
+      return;
+    try {
+      this.#wakewise.record(lane);
+    } catch (err) {
+      this.#stop(err);
+    }
+  }
+  waitMs(lane) {
+    return this.#builtin.waitMs(lane);
+  }
+  afterWakeWaitMs(lane) {
+    return this.#builtin.afterWakeWaitMs(lane);
+  }
+  canRemind() {
+    return this.#builtin.canRemind();
+  }
+  resize(lane, perHour) {
+    this.#builtin.resize(lane, perHour);
+    if (!this.#wakewise)
+      return;
+    try {
+      this.#wakewise.resize(lane, perHour);
+    } catch (err) {
+      this.#stop(err);
+    }
+  }
+  limit(lane) {
+    return this.#builtin.limit(lane);
+  }
+  used(lane) {
+    return this.#builtin.used(lane);
+  }
+}
 
 // src/recorder.ts
 import { closeSync as closeSync4, constants as constants3, fstatSync as fstatSync2, lstatSync as lstatSync5, openSync as openSync4, readFileSync as readFileSync7, renameSync as renameSync3, writeFileSync as writeFileSync2, writeSync as writeSync3 } from "fs";
@@ -20229,12 +21038,13 @@ import { join as join9 } from "path";
 var RECORDER_MAX_BYTES = 1024 * 1024;
 var RECORDER_MAX_AGE_MS = 7 * 24 * 3600000;
 var RECORDER_MAX_EVENTS = 20;
-var UUID_RE4 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+var UUID_RE5 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 var WORD_RE = /^[a-z][a-z._-]{0,39}$/;
 var HANDLE_RE2 = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 var DECISIONS = new Set(["wake", "hold", "digest", "drop"]);
+var sanitizeOutcome = (d) => ("lane" in d) && (d.lane === "normal" || d.lane === "direct") ? { lane: d.lane } : { waitMs: "waitMs" in d && typeof d.waitMs === "number" ? d.waitMs : -1 };
 var word = (value) => typeof value === "string" && WORD_RE.test(value) ? value : "other";
-var uuid2 = (value) => typeof value === "string" && UUID_RE4.test(value.toLowerCase()) ? value.toLowerCase() : "invalid-id";
+var uuid2 = (value) => typeof value === "string" && UUID_RE5.test(value.toLowerCase()) ? value.toLowerCase() : "invalid-id";
 
 class DecisionRecorder {
   #dir;
@@ -20279,15 +21089,36 @@ class DecisionRecorder {
         events,
         ...input.events.length > events.length ? { more: input.events.length - events.length } : {}
       });
-      const fd = this.#open();
-      if (this.#size + line.length + 1 > this.#maxBytes)
-        this.#prune(line.length + 1);
-      writeSync3(this.#fd ?? fd, `${line}
-`);
-      this.#size += line.length + 1;
+      this.#writeLine(line);
     } catch (e) {
       this.#fail(e);
     }
+  }
+  recordShadowDiff(input) {
+    if (this.#off)
+      return;
+    try {
+      const line = JSON.stringify({
+        at: new Date(this.#now()).toISOString(),
+        recipient: this.#handle,
+        type: "shadow_diff",
+        method: input.method,
+        builtin: sanitizeOutcome(input.builtin),
+        wakewise: sanitizeOutcome(input.wakewise),
+        lane: input.lane === "normal" || input.lane === "direct" ? input.lane : null
+      });
+      this.#writeLine(line);
+    } catch (e) {
+      this.#fail(e);
+    }
+  }
+  #writeLine(line) {
+    const fd = this.#open();
+    if (this.#size + line.length + 1 > this.#maxBytes)
+      this.#prune(line.length + 1);
+    writeSync3(this.#fd ?? fd, `${line}
+`);
+    this.#size += line.length + 1;
   }
   close() {
     if (this.#fd === null)
@@ -20531,17 +21362,18 @@ class Router {
         this.#log(broad);
       if (cfg.market && cfg.market.client === cfg.client)
         throw new Error(`Agent ${cfg.handle}: the Market lane needs its own client.`);
+      const recorder = cfg.recordDecisions && this.#recordingsDir !== undefined ? new DecisionRecorder(this.#recordingsDir, cfg.handle, {
+        now: this.#now,
+        onError: (m) => this.#log(`[${cfg.handle}] ${m}`)
+      }) : null;
       const st = {
         cfg,
-        recorder: cfg.recordDecisions && this.#recordingsDir !== undefined ? new DecisionRecorder(this.#recordingsDir, cfg.handle, {
-          now: this.#now,
-          onError: (m) => this.#log(`[${cfg.handle}] ${m}`)
-        }) : null,
+        recorder,
         lanes: {
           tilori: newLane("tilori", cfg.client, cfg.subscriptions),
           market: cfg.market ? newLane("market", cfg.market.client, [MARKET_SUBSCRIPTION]) : null
         },
-        policy: new BuiltinPolicy(cfg.wakesPerHour ?? DEFAULT_WAKES_PER_HOUR, cfg.directWakesPerHour ?? DEFAULT_DIRECT_WAKES_PER_HOUR, this.#now),
+        policy: this.#buildPolicy(cfg, recorder),
         directSubs: new Set,
         capHeld: new Set,
         recent: new Map,
@@ -20575,6 +21407,45 @@ class Router {
       if (cfg.push)
         t.push = { stream: this.#pushStream(st, cfg.push), seq: 0, kick: makeKick(), back: false, caught: 0, aliveAt: 0, polledAt: 0, lostAt: 0, fallbackAt: 0, polling: false };
     }
+  }
+  #buildPolicy(cfg, recorder) {
+    const normal = cfg.wakesPerHour ?? DEFAULT_WAKES_PER_HOUR;
+    const direct = cfg.directWakesPerHour ?? DEFAULT_DIRECT_WAKES_PER_HOUR;
+    const engine = cfg.wakeEngine ?? "builtin";
+    if (cfg.shadow && engine === "wakewise") {
+      throw new Error(`Agent ${cfg.handle}: shadow cannot be true when wake_engine is "wakewise".`);
+    }
+    if (cfg.shadow) {
+      let lastDiffLogAt = -Infinity;
+      const onDiff = (diff) => {
+        if (recorder) {
+          recorder.recordShadowDiff({
+            method: diff.method,
+            builtin: diff.builtin,
+            wakewise: diff.wakewise,
+            lane: diff.lane
+          });
+          return;
+        }
+        const now = this.#now();
+        if (lastDiffLogAt === -Infinity || now - lastDiffLogAt >= 60000) {
+          lastDiffLogAt = now;
+          this.#log(`[${cfg.handle}] wakewise shadow diff (${diff.method}): builtin=${JSON.stringify(diff.builtin)} wakewise=${JSON.stringify(diff.wakewise)}`);
+        }
+      };
+      return new ShadowPolicy(normal, direct, {
+        now: this.#now,
+        onDiff,
+        onError: (m) => this.#log(`[${cfg.handle}] ${m}`)
+      });
+    }
+    if (engine === "wakewise") {
+      return new FailOpenWakewisePolicy(normal, direct, {
+        now: this.#now,
+        onError: (m) => this.#log(`[${cfg.handle}] ${m}`)
+      });
+    }
+    return new BuiltinPolicy(normal, direct, this.#now);
   }
   #laneList(st) {
     return st.lanes.market ? [st.lanes.tilori, st.lanes.market] : [st.lanes.tilori];
@@ -20863,6 +21734,9 @@ class Router {
     st.policy.resize("normal", live.wakesPerHour);
     note("direct_wakes_per_hour", st.policy.limit("direct"), live.directWakesPerHour);
     st.policy.resize("direct", live.directWakesPerHour);
+    if (live.wakeEngine !== undefined && live.wakeEngine !== (st.cfg.wakeEngine ?? "builtin") || live.shadow !== undefined && live.shadow !== (st.cfg.shadow ?? false)) {
+      this.#log(`[${handle}] wake_engine/shadow change takes effect on restart`);
+    }
     note("pause_seconds", st.cfg.pauseSeconds ?? this.#broadPauseMs / 1000, live.pauseSeconds);
     note("post_wake_minutes", st.cfg.postWakeMinutes ?? 0, live.postWakeMinutes);
     note("stall_minutes", st.cfg.stallMinutes ?? 0, live.stallMinutes);
@@ -22109,13 +22983,20 @@ function liveSettings(s = {}) {
   const direct = s.direct_wakes_per_hour ?? DEFAULT_DIRECT_WAKES_PER_HOUR;
   if (!Number.isInteger(direct) || direct < 0)
     throw new Error("direct_wakes_per_hour must be a non-negative integer.");
+  const engine = wakeEngine(s.wake_engine);
+  const shadow = shadowMode(s.shadow);
+  if (shadow && engine === "wakewise") {
+    throw new Error('shadow cannot be true when wake_engine is "wakewise".');
+  }
   return {
     wakesPerHour: wakes,
     directWakesPerHour: direct,
     pauseSeconds: pauseSeconds(s.pause_seconds),
     postWakeMinutes: postWakeMinutes(s.post_wake_minutes),
     reminderEveryMs: reminderSettings(s)?.everyMs,
-    stallMinutes: stallMinutes(s.stall_minutes)
+    stallMinutes: stallMinutes(s.stall_minutes),
+    wakeEngine: engine,
+    shadow
   };
 }
 function withinReloadCeiling(s = {}) {
@@ -23778,6 +24659,9 @@ async function runConnect(o) {
     o.out(line);
   return 0;
 }
+// src/watch.ts
+import { join as join15 } from "path";
+
 // src/injectors/notify-lines.ts
 class NotifyLinesInjector {
   out;
@@ -23889,12 +24773,15 @@ function directRouter(opts) {
         stallMinutes: stallMinutes(settings.stall_minutes),
         ...pushEnabled(settings) ? { push: { endpoint: url, apiKey, rereadKey } } : {},
         market: marketLane(opts.config, opts.agent, apiKey, rereadKey, opts.logger),
-        ...wakeFilterConfig(opts.config, opts.agent)
+        ...wakeFilterConfig(opts.config, opts.agent),
+        ...recorderConfig(opts.config, opts.agent),
+        ...policyConfig(opts.config, opts.agent)
       }
     ],
     logger: opts.logger,
     waitMs: opts.waitMs,
-    signalDir: signalDir(opts.logger)
+    signalDir: signalDir(opts.logger),
+    recordingsDir: join15(tiloriHome(), "recordings")
   });
 }
 async function runNotifyLines(opts) {
@@ -24273,7 +25160,7 @@ async function readSecretFromStdin(prompt) {
   });
 }
 function agentsWithKeys() {
-  const dir = join15(tiloriHome(), "agents");
+  const dir = join16(tiloriHome(), "agents");
   if (!existsSync8(dir))
     return [];
   return readdirSync4(dir).filter((f) => f.endsWith(".key")).map((f) => f.slice(0, -4)).filter((h) => {
@@ -24312,7 +25199,7 @@ async function launchClaude(args) {
     if (a === "--settings" || a.startsWith("--settings="))
       throw new Error("claude sets Claude Code's --settings itself; pass other settings in a settings file instead.");
   const home = allowedHome(dir);
-  const config = loadConfig(join15(home, "config.json"));
+  const config = loadConfig(join16(home, "config.json"));
   const env = { TILORI_HOME: home, TILORI_MCP_URL: buildMcpUrl(config.url).toString() };
   if (config.market_url)
     env.TILORI_MARKET_URL = buildMarketUrl(config.market_url).toString();
@@ -24923,12 +25810,13 @@ async function main(argv = process.argv.slice(2)) {
               ...pushEnabled(settings) ? { push: { endpoint: url, apiKey, rereadKey } } : {},
               market: marketLane(config, agent, apiKey, rereadKey, log),
               ...wakeFilterConfig(config, agent),
-              ...recorderConfig(config, agent)
+              ...recorderConfig(config, agent),
+              ...policyConfig(config, agent)
             }
           ],
           logger: log,
           signalDir: signalDir(log),
-          recordingsDir: join15(tiloriHome(), "recordings"),
+          recordingsDir: join16(tiloriHome(), "recordings"),
           waitMs
         });
         const t = str(args, "exec-timeout-ms") ?? settings.exec_timeout_ms;
@@ -24942,7 +25830,7 @@ async function main(argv = process.argv.slice(2)) {
         const url = keyUrl(config, str(args, "url"));
         const handles = agentsWithKeys();
         if (!handles.length)
-          throw new Error(`No agent keys in ${join15(tiloriHome(), "agents")}. Run tilori-agent init first.`);
+          throw new Error(`No agent keys in ${join16(tiloriHome(), "agents")}. Run tilori-agent init first.`);
         const agents = handles.map((handle) => {
           const s = config.agents?.[handle] ?? {};
           const apiKey = readKey(handle);
@@ -24954,6 +25842,7 @@ async function main(argv = process.argv.slice(2)) {
             market: marketLane(config, handle, apiKey, rereadKey, log),
             ...wakeFilterConfig(config, handle),
             ...recorderConfig(config, handle),
+            ...policyConfig(config, handle),
             subscriptions: desiredSubscriptions(s),
             wakesPerHour: s.wakes_per_hour,
             directWakesPerHour: s.direct_wakes_per_hour,
@@ -24963,7 +25852,7 @@ async function main(argv = process.argv.slice(2)) {
             stallMinutes: stallMinutes(s.stall_minutes)
           };
         });
-        const router = new Router({ agents, logger: log, signalDir: activityDir(), recordingsDir: join15(tiloriHome(), "recordings") });
+        const router = new Router({ agents, logger: log, signalDir: activityDir(), recordingsDir: join16(tiloriHome(), "recordings") });
         for (const handle of handles) {
           const s = config.agents?.[handle];
           if (s?.injector === "exec" && s.exec) {
@@ -25033,7 +25922,7 @@ ${rules}` : "");
         if (!handles.length) {
           if (pending.length)
             return 0;
-          console.log(`No agents on this machine yet: no keys in ${join15(tiloriHome(), "agents")}. ` + "Run tilori-agent setup [<handle>] to create and connect one, or tilori-agent init --agent <handle> --url <tilori-mcp-url> for an existing key");
+          console.log(`No agents on this machine yet: no keys in ${join16(tiloriHome(), "agents")}. ` + "Run tilori-agent setup [<handle>] to create and connect one, or tilori-agent init --agent <handle> --url <tilori-mcp-url> for an existing key");
           return 0;
         }
         if (serverLine)
