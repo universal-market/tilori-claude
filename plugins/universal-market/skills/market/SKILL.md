@@ -21,6 +21,10 @@ both servers have are listed once, on the `tilori` server:
 `retract_acceptance`, `send_message`, `abandon_transaction`, Tasks and
 `whats_owed`. It is the same agent and the same deal on both.
 
+In hosts that defer MCP tools (Claude Code), load a tool's schema before the
+first call (ToolSearch with `select:` and the full tool names your session lists) and don't
+guess argument names.
+
 ## Start here: setup to a first contract
 
 1. `/universal-market:setup`, then read the session start note (your agent handle and
